@@ -1,6 +1,12 @@
+mod auth;
+mod graphql_schema;
+
+use actix_web::dev::ServiceRequest;
 use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
-use alcoholic_jwt::{JWK, JWKS};
-use serde::Deserialize;
+use actix_web_httpauth::extractors::bearer::{BearerAuth, Config};
+use actix_web_httpauth::extractors::AuthenticationError;
+use actix_web_httpauth::middleware::HttpAuthentication;
+
 use std::fmt;
 
 use juniper::{EmptyMutation, EmptySubscription};
@@ -9,17 +15,11 @@ use web::Payload;
 
 use graphql_schema::{Context, Query, Schema};
 
-mod graphql_schema;
-
 const GRAPHQL_PATH: &str = "/graphql";
 
-#[derive(Deserialize)]
-struct OidcConfig {
-    jwks_uri: String,
-}
-
 #[derive(fmt::Debug)]
-enum Error {
+pub enum Error {
+    JWKSFetchError,
     CannotFindAuthorizationSigningKey(String),
 }
 
@@ -30,6 +30,9 @@ impl fmt::Display for Error {
         match self {
             Error::CannotFindAuthorizationSigningKey(kid) => {
                 write!(f, "No key with KID {} was found", kid)
+            }
+            Error::JWKSFetchError => {
+                write!(f, "Error while fetching JWKs from authorization server")
             }
         }
     }
@@ -70,39 +73,30 @@ async fn handle_playground() -> impl Responder {
     playground_handler(GRAPHQL_PATH, None).await
 }
 
-async fn fetch_jwks(uri: &str) -> Result<JWKS, Box<dyn std::error::Error>> {
-    let res = reqwest::get(uri).await?;
-    let jwks = res.json::<JWKS>().await?;
-    Ok(jwks)
-}
-
-async fn provide_jwk(kid: &str) -> Result<JWK, Box<dyn std::error::Error>> {
-    let discovery_uri = "http://localhost:8080/auth/realms/test/";
-    let oidc_config_uri = String::from(discovery_uri) + ".well-known/openid-configuration";
-    let oidc_config = reqwest::get(oidc_config_uri)
-        .await?
-        .json::<OidcConfig>()
-        .await?;
-
-    let jwks = fetch_jwks(&oidc_config.jwks_uri).await?;
-    println!("jwks: {:?}", jwks);
-
-    jwks.find(kid)
-        .map(|jwk| jwk.clone())
-        .ok_or_else(|| Error::CannotFindAuthorizationSigningKey(kid.into()).into())
+async fn validator(
+    req: ServiceRequest,
+    credentials: BearerAuth,
+) -> Result<ServiceRequest, actix_web::Error> {
+    let config = req
+        .app_data::<Config>()
+        .map(|data| data.clone())
+        .unwrap_or_else(Default::default);
+    match auth::validate_token(credentials.token()).await {
+        Ok(res) => {
+            if res == true {
+                Ok(req)
+            } else {
+                Err(AuthenticationError::from(config).into())
+            }
+        }
+        Err(_) => Err(AuthenticationError::from(config).into()),
+    }
 }
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     let addrs = ["127.0.0.1:8081"];
-
-    // only for testing right now
-    if let Err(e) = provide_jwk("foo").await {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            e.to_string(),
-        ));
-    }
+    let _actix_sys = actix_web::rt::System::new("server");
 
     let mut actix_srv = HttpServer::new(|| {
         App::new()
@@ -111,6 +105,7 @@ async fn main() -> std::io::Result<()> {
                 EmptyMutation::<Context>::new(),
                 EmptySubscription::<Context>::new(),
             ))
+            .wrap(HttpAuthentication::bearer(validator))
             .service(handle_graphql_get)
             .service(handle_graphql_post)
             .service(handle_graphiql)
