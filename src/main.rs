@@ -1,3 +1,4 @@
+
 mod auth;
 mod graphql_schema;
 
@@ -6,12 +7,17 @@ use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Resp
 use actix_web_httpauth::extractors::bearer::{BearerAuth, Config};
 use actix_web_httpauth::extractors::AuthenticationError;
 use actix_web_httpauth::middleware::HttpAuthentication;
+use tokio::runtime::Handle;
+use serde_json::json;
 
 use std::fmt;
 
 use juniper::{EmptyMutation, EmptySubscription};
 use juniper_actix::{graphiql_handler, graphql_handler, playground_handler};
 use web::Payload;
+
+
+use handlebars::Handlebars;
 
 use graphql_schema::{Context, Query, Schema};
 
@@ -21,6 +27,7 @@ const GRAPHQL_PATH: &str = "/graphql";
 pub enum Error {
     JWKSFetchError,
     CannotFindAuthorizationSigningKey(String),
+    TokenExchangeError,
 }
 
 impl std::error::Error for Error {}
@@ -34,13 +41,28 @@ impl fmt::Display for Error {
             Error::JWKSFetchError => {
                 write!(f, "Error while fetching JWKs from authorization server")
             }
+            Error::TokenExchangeError => {
+                write!(f, "Token exchange with authorization server failed")
+            }
         }
     }
 }
 
 #[get("/")]
 async fn hello() -> impl Responder {
-    HttpResponse::Ok().body("Hello Resources!")
+    HttpResponse::Found().header("location", "/web/dashboard").finish()
+}
+
+#[get("/{template_name}")]
+async fn handle_web(hb: web::Data<Handlebars<'_>>, template_name: web::Path<String>) -> impl Responder {
+    let data = serde_json::json!({
+        "foo": "bar"
+    });
+
+    match hb.render(&template_name, &data) {
+        Ok(body) => HttpResponse::Ok().body(body),
+        Err(e) => HttpResponse::InternalServerError().body(e.desc)
+    }
 }
 
 #[get("/graphql")]
@@ -99,18 +121,30 @@ async fn main() -> std::io::Result<()> {
     let _actix_sys = actix_web::rt::System::new("server");
 
     let mut actix_srv = HttpServer::new(|| {
-        App::new()
+        let mut hb = Handlebars::new();
+        hb.register_templates_directory(".html", "templates").unwrap();
+        let hb_data = web::Data::new(hb);
+    
+            App::new()
+        .service(hello)
+        .service(
+            web::scope("web")
+            .app_data(hb_data)
+            .service(handle_web)
+        )
+        .service(
+            web::scope("gql")
             .data(Schema::new(
                 Query,
                 EmptyMutation::<Context>::new(),
                 EmptySubscription::<Context>::new(),
             ))
-            .wrap(HttpAuthentication::bearer(validator))
+                .wrap(HttpAuthentication::bearer(validator))
             .service(handle_graphql_get)
             .service(handle_graphql_post)
             .service(handle_graphiql)
             .service(handle_playground)
-            .service(hello)
+        )
     });
 
     for addr in addrs.iter() {
