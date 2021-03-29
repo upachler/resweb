@@ -1,8 +1,6 @@
-use actix_web::{client::Client, web::post};
+use actix_web::client::Client;
 use alcoholic_jwt::{token_kid, validate, Validation, JWK, JWKS};
 use serde::{Deserialize, Serialize};
-use std::error::Error;
-use http::status::StatusCode;
 
 const AUTHORITY_URI: &str = "http://localhost:8080/auth/realms/test";
 
@@ -90,7 +88,7 @@ pub async fn exchange_code_for_token(code: &str, redirect_uri: Option<&str>, sta
     .await;
 
     let mut response = match post_result {
-        Err(e) => return Err(crate::Error::TokenExchangeError),
+        Err(_) => return Err(crate::Error::TokenExchangeError),
         Ok(r) => r
     };
 
