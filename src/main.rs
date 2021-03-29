@@ -1,14 +1,13 @@
 
 mod auth;
 mod graphql_schema;
+mod cookie_auth;
 
 use actix_web::dev::ServiceRequest;
 use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use actix_web_httpauth::extractors::bearer::{BearerAuth, Config};
 use actix_web_httpauth::extractors::AuthenticationError;
 use actix_web_httpauth::middleware::HttpAuthentication;
-use tokio::runtime::Handle;
-use serde_json::json;
 
 use std::fmt;
 
@@ -125,26 +124,27 @@ async fn main() -> std::io::Result<()> {
         hb.register_templates_directory(".html", "templates").unwrap();
         let hb_data = web::Data::new(hb);
     
-            App::new()
-        .service(hello)
-        .service(
-            web::scope("web")
-            .app_data(hb_data)
-            .service(handle_web)
-        )
-        .service(
-            web::scope("gql")
-            .data(Schema::new(
-                Query,
-                EmptyMutation::<Context>::new(),
-                EmptySubscription::<Context>::new(),
-            ))
+        App::new()
+            .service(hello)
+            .service(
+                web::scope("web")
+                .app_data(hb_data)
+                .wrap(cookie_auth::CookieAuth)
+                .service(handle_web)
+            )
+            .service(
+                web::scope("gql")
+                .data(Schema::new(
+                    Query,
+                    EmptyMutation::<Context>::new(),
+                    EmptySubscription::<Context>::new(),
+                ))
                 .wrap(HttpAuthentication::bearer(validator))
-            .service(handle_graphql_get)
-            .service(handle_graphql_post)
-            .service(handle_graphiql)
-            .service(handle_playground)
-        )
+                .service(handle_graphql_get)
+                .service(handle_graphql_post)
+                .service(handle_graphiql)
+                .service(handle_playground)
+            )
     });
 
     for addr in addrs.iter() {
