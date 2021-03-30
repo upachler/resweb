@@ -8,6 +8,7 @@ use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Resp
 use actix_web_httpauth::extractors::bearer::{BearerAuth, Config};
 use actix_web_httpauth::extractors::AuthenticationError;
 use actix_web_httpauth::middleware::HttpAuthentication;
+use auth::OidcConfig;
 
 use std::fmt;
 
@@ -20,13 +21,16 @@ use handlebars::Handlebars;
 
 use graphql_schema::{Context, Query, Schema};
 
+const CLIENT_ID: &str = "resweb";
 const GRAPHQL_PATH: &str = "/graphql";
+const EXCHANGE_TOKEN_PATH: &str = "/web-token-exchange";
 
 #[derive(fmt::Debug)]
 pub enum Error {
     JWKSFetchError,
     CannotFindAuthorizationSigningKey(String),
-    TokenExchangeError,
+    TokenExchangeFailure(String),
+    TokenExchangeResponseError(auth::ErrorResponse)
 }
 
 impl std::error::Error for Error {}
@@ -40,8 +44,11 @@ impl fmt::Display for Error {
             Error::JWKSFetchError => {
                 write!(f, "Error while fetching JWKs from authorization server")
             }
-            Error::TokenExchangeError => {
-                write!(f, "Token exchange with authorization server failed")
+            Error::TokenExchangeFailure(msg) => {
+                write!(f, "Token exchange with authorization server failed: {}", msg)
+            }
+            Error::TokenExchangeResponseError(r) => {
+                write!(f, "Authorization server returned an error response on token exchange: {:?}", r)
             }
         }
     }
@@ -114,22 +121,66 @@ async fn validator(
     }
 }
 
-#[tokio::main]
-async fn main() -> std::io::Result<()> {
-    let addrs = ["127.0.0.1:8081"];
-    let _actix_sys = actix_web::rt::System::new("server");
+#[derive(Clone)]
+struct ResWebCookieAuthHandler {
+    client_id: String,
+    auth_uri: String,
+}
 
-    let mut actix_srv = HttpServer::new(|| {
+impl cookie_auth::CookieAuthHandler for ResWebCookieAuthHandler {
+    fn client_id(&self) -> &str {
+        &self.client_id
+    }
+
+    fn token_exchange_url(&self, request_url: &str) -> Result<String,url::ParseError> {
+        let mut url = url::Url::parse(request_url)?;
+        url.set_path(EXCHANGE_TOKEN_PATH);
+        Ok(url.to_string())
+    }
+
+    fn auth_uri<'a>(&'a self) -> &'a str {
+        &self.auth_uri
+    }
+}
+
+
+fn main() {
+    tokio::runtime::Builder::new()
+    .enable_all()
+    .build()
+    .unwrap()
+    .block_on(async_main())
+    .unwrap()
+}
+
+async fn async_main() -> std::io::Result<()> {
+    let addrs = ["127.0.0.1:8081"];
+    let _actix_sys = actix_web::rt::System::run_in_tokio("server", &tokio::task::LocalSet::new());
+
+    let oidc_config = match auth::get_oidc_config().await {
+        Err(_e) => return Ok(()),//return Err(std::io::Error::new(std::io::ErrorKind::Other, e.into())),
+        Ok(c) => c
+    };
+
+//let oidc_config = OidcConfig{jwks_uri: "".into(), authorization_endpoint: "".into(), token_endpoint: "".into()};
+
+    let mut actix_srv = HttpServer::new(move || {
         let mut hb = Handlebars::new();
         hb.register_templates_directory(".html", "templates").unwrap();
         let hb_data = web::Data::new(hb);
-    
+
+        let cookie_auth = cookie_auth::CookieAuth::new(ResWebCookieAuthHandler{
+            client_id: CLIENT_ID.into(),
+            auth_uri: oidc_config.authorization_endpoint.clone()                        
+        });
+        
         App::new()
             .service(hello)
+            .route(EXCHANGE_TOKEN_PATH, web::get().to(cookie_auth::handle_web_token_exchange))
             .service(
                 web::scope("web")
                 .app_data(hb_data)
-                .wrap(cookie_auth::CookieAuth)
+                .wrap(cookie_auth)
                 .service(handle_web)
             )
             .service(
