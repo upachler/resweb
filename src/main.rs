@@ -3,6 +3,7 @@ mod auth;
 mod graphql_schema;
 mod cookie_auth;
 
+use actix_session::CookieSession;
 use actix_web::dev::ServiceRequest;
 use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use actix_web_httpauth::extractors::bearer::{BearerAuth, Config};
@@ -23,7 +24,7 @@ use graphql_schema::{Context, Query, Schema};
 
 const CLIENT_ID: &str = "resweb";
 const GRAPHQL_PATH: &str = "/graphql";
-const EXCHANGE_TOKEN_PATH: &str = "/web-token-exchange";
+const EXCHANGE_TOKEN_PATH: &str = "/web/.exchange-token";
 
 #[derive(fmt::Debug)]
 pub enum Error {
@@ -132,13 +133,11 @@ impl cookie_auth::CookieAuthHandler for ResWebCookieAuthHandler {
         &self.client_id
     }
 
-    fn token_exchange_url(&self, request_url: &str) -> Result<String,url::ParseError> {
-        let mut url = url::Url::parse(request_url)?;
-        url.set_path(EXCHANGE_TOKEN_PATH);
-        Ok(url.to_string())
+    fn token_exchange_path(&self) -> &str {
+        EXCHANGE_TOKEN_PATH
     }
 
-    fn auth_uri<'a>(&'a self) -> &'a str {
+    fn auth_uri(&self) -> &str {
         &self.auth_uri
     }
 }
@@ -176,11 +175,14 @@ async fn async_main() -> std::io::Result<()> {
         
         App::new()
             .service(hello)
-            .route(EXCHANGE_TOKEN_PATH, web::get().to(cookie_auth::handle_web_token_exchange))
             .service(
                 web::scope("web")
                 .app_data(hb_data)
                 .wrap(cookie_auth)
+                .wrap(
+                    CookieSession::private(&[0; 32]) // <- create cookie based session middleware
+                    .secure(false)
+                )
                 .service(handle_web)
             )
             .service(
