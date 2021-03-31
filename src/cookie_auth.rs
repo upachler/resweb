@@ -1,3 +1,4 @@
+use core::future;
 use std::{future::{Future, Ready}, pin::Pin, task::{Context, Poll}};
 
 use actix_session::UserSession;
@@ -10,8 +11,8 @@ const SESSION_AUTH_KEY: &str = "auth_r";
 
 pub trait CookieAuthHandler : Clone {
     fn client_id(&self) -> &str;
-    fn auth_uri<'a>(&'a self) -> &'a str;
-    fn token_exchange_url(&self, request_url: &str) -> Result<String,ParseError>;
+    fn auth_uri(&self) -> &str;
+    fn token_exchange_path(&self) -> &str;
 }
 
 pub struct CookieAuth<H> 
@@ -75,6 +76,27 @@ where
     }
 
     fn call(&mut self, req: ServiceRequest) -> Self::Future {
+        // check if this request is a token exchange attempt
+        if req.method() == http::Method::GET && req.uri().path() == self.handler.token_exchange_path() {
+            let query_str = req.query_string();
+            let q = match web::Query::<WebTokenExcechangeQuery>::from_query(query_str) {
+                Ok(q) => q.into_inner(),
+                Err(e) => return Box::pin(async{Err(ErrorInternalServerError(e))}),
+            };
+
+            let absolute_request_uri = String::from(req.connection_info().scheme()) + "://" + req.connection_info().host() + &req.uri().to_string();
+            let token_exchange_uri = match token_exchange_url(self.handler.token_exchange_path(), &absolute_request_uri) {
+                Ok(u) => u,
+                Err(e) => return Box::pin(async move {Err(ErrorInternalServerError(e))})
+            };
+            let fut = async move {
+                let res = handle_web_token_exchange(&token_exchange_uri, &req, &q).await;
+                Ok(req.into_response(res))
+            };
+            return Box::pin(fut)
+        }
+
+        // all other requests are checked for existing auth cookie sessions, and redirected if need be
         let auth_r = req.get_session().get::<String>(SESSION_AUTH_KEY);
         let _access_token_r = match auth_r {
             Ok(Some(t)) => t,
@@ -93,7 +115,7 @@ where
 
                 let current_request_uri = String::new() + hreq.connection_info().scheme() + "://" + hreq.connection_info().host() + &hreq.uri().to_string();
                 
-                match self.handler.token_exchange_url(&current_request_uri) {
+                match token_exchange_url(self.handler.token_exchange_path(), &current_request_uri) {
                     Ok(token_exchange_uri) => auth_request_uri
                         .query_pairs_mut()
                         .append_pair("redirect_uri", &token_exchange_uri),
@@ -118,14 +140,22 @@ pub struct WebTokenExcechangeQuery {
     state: Option<String>,
 }
 
-pub async fn handle_web_token_exchange(hreq: HttpRequest, q: web::Query<WebTokenExcechangeQuery>) -> impl Responder {
-    let absolute_request_uri = String::from(hreq.connection_info().scheme()) + "://" + hreq.connection_info().host() + &hreq.uri().to_string();
-    let token_response = match auth::exchange_code_for_token(&q.code, Some(&absolute_request_uri), q.state.as_deref()).await {
+fn token_exchange_url(token_exchange_path: &str, request_url: &str) -> Result<String,url::ParseError> {
+    let mut url = url::Url::parse(request_url)?;
+    url.set_path(token_exchange_path);
+    url.set_query(None);
+    url.set_fragment(None);
+    Ok(url.to_string())
+}
+
+async fn handle_web_token_exchange(token_exchange_url: &str, req: &ServiceRequest, q: &WebTokenExcechangeQuery) -> HttpResponse<Body> {
+    let redirect_uri = token_exchange_url;
+    let token_response = match auth::exchange_code_for_token(&q.code, Some(&redirect_uri), q.state.as_deref()).await {
         Ok(r) => r,
         Err(e) => return HttpResponse::BadRequest().body(e.to_string()),
     };
 
-    match hreq.get_session().set(SESSION_AUTH_KEY, token_response.access_token) {
+    match req.get_session().set(SESSION_AUTH_KEY, token_response.access_token) {
         Ok(_) => (),
         Err(_e) => return HttpResponse::InternalServerError().finish(),
     }
