@@ -206,11 +206,9 @@ async fn async_main(app_config: AppConfig) -> std::io::Result<()> {
 
     let auth = Arc::new(OidcAuth::new(app_config.authorization_server_url.to_string(), &app_config.client_id, None));
     let oidc_config = match auth.get_oidc_config().await {
-        Err(_e) => return Ok(()),//return Err(std::io::Error::new(std::io::ErrorKind::Other, e.into())),
+        Err(_e) => return Ok(()),
         Ok(c) => c
     };
-
-//let oidc_config = OidcConfig{jwks_uri: "".into(), authorization_endpoint: "".into(), token_endpoint: "".into()};
 
     let mut actix_srv = HttpServer::new(move || {
         let mut hb = Handlebars::new();
