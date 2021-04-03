@@ -42,6 +42,7 @@ pub enum Error {
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     port: u16,
+    interface_addresses: Vec<std::net::IpAddr>,
     static_file_path: Option<Box<std::path::Path>>,
     authorization_server_url: url::Url,
     client_id: String,
@@ -201,7 +202,12 @@ fn main() {
 }
 
 async fn async_main(app_config: AppConfig) -> std::io::Result<()> {
-    let addrs = ["127.0.0.1:8081"];
+    let addrs = app_config.interface_addresses
+    .iter()
+    .filter(|ip|ip.is_ipv4())
+    .map(|ip|ip.to_string() + ":" + &app_config.port.to_string())
+    .collect::<Vec<_>>();
+    
     let _actix_sys = actix_web::rt::System::run_in_tokio("server", &tokio::task::LocalSet::new());
 
     let auth = Arc::new(OidcAuth::new(app_config.authorization_server_url.to_string(), &app_config.client_id, None));
