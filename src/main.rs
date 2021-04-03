@@ -52,7 +52,7 @@ pub struct AppConfig {
 
 struct WebContext<'a> {
     hb: Handlebars<'a>,
-    static_file_path: Option<Box<std::path::Path>>,
+    app_config: AppConfig,
 }
 
 impl std::error::Error for Error {}
@@ -83,16 +83,12 @@ async fn hello() -> impl Responder {
 
 #[get("/{template_name:.*}")]
 async fn handle_web(req: HttpRequest, wc: web::Data<WebContext<'_>>, web::Path(template_name): web::Path<String>) -> impl Responder {
-    let data = serde_json::json!({
-        "foo": "bar"
-    });
-    
     if wc.hb.has_template(&template_name) {
-        match wc.hb.render(&template_name, &data) {
+        match wc.hb.render(&template_name, wc.app_config.site_list.sites()) {
             Ok(body) => HttpResponse::Ok().body(body),
             Err(e) => HttpResponse::InternalServerError().body(e.desc)
         }
-    } else if let Some(path) = &wc.static_file_path {
+    } else if let Some(path) = &wc.app_config.static_file_path {
         // serve static files      
         path
         .join(PathBuf::from(&template_name))
@@ -219,7 +215,7 @@ async fn async_main(app_config: AppConfig) -> std::io::Result<()> {
     let mut actix_srv = HttpServer::new(move || {
         let mut hb = Handlebars::new();
         hb.register_templates_directory(".html", "templates").unwrap();
-        let web_context = web::Data::new(WebContext{hb, static_file_path: app_config.static_file_path.clone()});
+        let web_context = web::Data::new(WebContext{hb, app_config: app_config.clone()});
 
         let cookie_auth = cookie_auth::CookieAuth::new(ResWebCookieAuthHandler{
             oidc_auth: auth.clone(),

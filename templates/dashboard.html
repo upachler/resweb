@@ -4,5 +4,10 @@
     </head>
     <body>
         <p>hello World</p>
+        <ul>
+            {{#each this}}
+            <li><a href="{{this.url}}"><span>{{this.name}}</span></a></li>
+            {{/each}}
+        </ul>
     </body>
 </html>
