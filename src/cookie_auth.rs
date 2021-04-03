@@ -1,15 +1,16 @@
-use core::future;
-use std::{future::{Future, Ready}, pin::Pin, task::{Context, Poll}};
+
+use std::{future::{Future, Ready}, pin::Pin, sync::Arc, task::{Context, Poll}};
 
 use actix_session::UserSession;
-use actix_web::{Error, HttpRequest, HttpResponse, Responder, dev::{Body, Service, ServiceRequest, ServiceResponse, Transform}, error::{ErrorBadRequest, ErrorInternalServerError}, web};
-use url::{Url, ParseError};
+use actix_web::{Error, HttpResponse, dev::{Body, Service, ServiceRequest, ServiceResponse, Transform}, error::{ErrorBadRequest, ErrorInternalServerError}, web};
+use url::{Url};
 
-use crate::auth;
+use crate::auth::OidcAuth;
 
 const SESSION_AUTH_KEY: &str = "auth_r";
 
 pub trait CookieAuthHandler : Clone {
+    fn oidc_auth(&self) -> Arc<OidcAuth>;
     fn client_id(&self) -> &str;
     fn auth_uri(&self) -> &str;
     fn token_exchange_path(&self) -> &str;
@@ -89,8 +90,9 @@ where
                 Ok(u) => u,
                 Err(e) => return Box::pin(async move {Err(ErrorInternalServerError(e))})
             };
+            let auth = self.handler.oidc_auth();
             let fut = async move {
-                let res = handle_web_token_exchange(&token_exchange_uri, &req, &q).await;
+                let res = handle_web_token_exchange(auth, &token_exchange_uri, &req, &q).await;
                 Ok(req.into_response(res))
             };
             return Box::pin(fut)
@@ -148,9 +150,9 @@ fn token_exchange_url(token_exchange_path: &str, request_url: &str) -> Result<St
     Ok(url.to_string())
 }
 
-async fn handle_web_token_exchange(token_exchange_url: &str, req: &ServiceRequest, q: &WebTokenExcechangeQuery) -> HttpResponse<Body> {
+async fn handle_web_token_exchange(auth: Arc<OidcAuth>, token_exchange_url: &str, req: &ServiceRequest, q: &WebTokenExcechangeQuery) -> HttpResponse<Body> {
     let redirect_uri = token_exchange_url;
-    let token_response = match auth::exchange_code_for_token(&q.code, Some(&redirect_uri), q.state.as_deref()).await {
+    let token_response = match auth.exchange_code_for_token(&q.code, Some(&redirect_uri), q.state.as_deref()).await {
         Ok(r) => r,
         Err(e) => return HttpResponse::BadRequest().body(e.to_string()),
     };

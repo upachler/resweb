@@ -2,16 +2,20 @@
 mod auth;
 mod graphql_schema;
 mod cookie_auth;
+mod site;
+mod cli;
 
+use actix_files::NamedFile;
 use actix_session::CookieSession;
 use actix_web::dev::ServiceRequest;
 use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use actix_web_httpauth::extractors::bearer::{BearerAuth, Config};
 use actix_web_httpauth::extractors::AuthenticationError;
 use actix_web_httpauth::middleware::HttpAuthentication;
-use auth::OidcConfig;
+use auth::{OidcAuth};
 
-use std::fmt;
+use std::{fmt, path::PathBuf, sync::Arc};
+
 
 use juniper::{EmptyMutation, EmptySubscription};
 use juniper_actix::{graphiql_handler, graphql_handler, playground_handler};
@@ -32,6 +36,22 @@ pub enum Error {
     CannotFindAuthorizationSigningKey(String),
     TokenExchangeFailure(String),
     TokenExchangeResponseError(auth::ErrorResponse)
+}
+
+
+#[derive(Debug, Clone)]
+pub struct AppConfig {
+    port: u16,
+    static_file_path: Option<Box<std::path::Path>>,
+    authorization_server_url: url::Url,
+    client_id: String,
+    site_list: site::SiteList,
+}
+
+
+struct WebContext<'a> {
+    hb: Handlebars<'a>,
+    static_file_path: Option<Box<std::path::Path>>,
 }
 
 impl std::error::Error for Error {}
@@ -60,15 +80,28 @@ async fn hello() -> impl Responder {
     HttpResponse::Found().header("location", "/web/dashboard").finish()
 }
 
-#[get("/{template_name}")]
-async fn handle_web(hb: web::Data<Handlebars<'_>>, template_name: web::Path<String>) -> impl Responder {
+#[get("/{template_name:.*}")]
+async fn handle_web(req: HttpRequest, wc: web::Data<WebContext<'_>>, web::Path(template_name): web::Path<String>) -> impl Responder {
     let data = serde_json::json!({
         "foo": "bar"
     });
-
-    match hb.render(&template_name, &data) {
-        Ok(body) => HttpResponse::Ok().body(body),
-        Err(e) => HttpResponse::InternalServerError().body(e.desc)
+    
+    if wc.hb.has_template(&template_name) {
+        match wc.hb.render(&template_name, &data) {
+            Ok(body) => HttpResponse::Ok().body(body),
+            Err(e) => HttpResponse::InternalServerError().body(e.desc)
+        }
+    } else if let Some(path) = &wc.static_file_path {
+        // serve static files      
+        path
+        .join(PathBuf::from(&template_name))
+        .canonicalize().ok()
+        .filter(|p|p.starts_with(&path))
+        .and_then(|p|NamedFile::open(p).ok())
+        .and_then(|n| n.into_response(&req).ok())
+        .unwrap_or(HttpResponse::NotFound().finish())
+    } else {
+        HttpResponse::NotFound().finish()
     }
 }
 
@@ -110,7 +143,10 @@ async fn validator(
         .app_data::<Config>()
         .map(|data| data.clone())
         .unwrap_or_else(Default::default);
-    match auth::validate_token(credentials.token()).await {
+    let auth = req.app_data::<Arc<OidcAuth>>()
+        .map(|data| data.clone())
+        .unwrap();
+    match auth.validate_token(credentials.token()).await {
         Ok(res) => {
             if res == true {
                 Ok(req)
@@ -126,9 +162,15 @@ async fn validator(
 struct ResWebCookieAuthHandler {
     client_id: String,
     auth_uri: String,
+    oidc_auth: Arc<OidcAuth>,
 }
 
 impl cookie_auth::CookieAuthHandler for ResWebCookieAuthHandler {
+
+    fn oidc_auth(&self) -> Arc<OidcAuth> {
+        self.oidc_auth.clone()
+    }
+
     fn client_id(&self) -> &str {
         &self.client_id
     }
@@ -144,19 +186,26 @@ impl cookie_auth::CookieAuthHandler for ResWebCookieAuthHandler {
 
 
 fn main() {
+    
+    let cfg = match cli::read_config() {
+        Ok(c) => c,
+        Err(_) => std::process::exit(1)
+    };
+
     tokio::runtime::Builder::new()
     .enable_all()
     .build()
     .unwrap()
-    .block_on(async_main())
+    .block_on(async_main(cfg))
     .unwrap()
 }
 
-async fn async_main() -> std::io::Result<()> {
+async fn async_main(app_config: AppConfig) -> std::io::Result<()> {
     let addrs = ["127.0.0.1:8081"];
     let _actix_sys = actix_web::rt::System::run_in_tokio("server", &tokio::task::LocalSet::new());
 
-    let oidc_config = match auth::get_oidc_config().await {
+    let auth = Arc::new(OidcAuth::new(app_config.authorization_server_url.to_string(), &app_config.client_id, None));
+    let oidc_config = match auth.get_oidc_config().await {
         Err(_e) => return Ok(()),//return Err(std::io::Error::new(std::io::ErrorKind::Other, e.into())),
         Ok(c) => c
     };
@@ -166,18 +215,19 @@ async fn async_main() -> std::io::Result<()> {
     let mut actix_srv = HttpServer::new(move || {
         let mut hb = Handlebars::new();
         hb.register_templates_directory(".html", "templates").unwrap();
-        let hb_data = web::Data::new(hb);
+        let web_context = web::Data::new(WebContext{hb, static_file_path: app_config.static_file_path.clone()});
 
         let cookie_auth = cookie_auth::CookieAuth::new(ResWebCookieAuthHandler{
+            oidc_auth: auth.clone(),
             client_id: CLIENT_ID.into(),
-            auth_uri: oidc_config.authorization_endpoint.clone()                        
+            auth_uri: oidc_config.authorization_endpoint.clone(),
         });
         
         App::new()
             .service(hello)
             .service(
                 web::scope("web")
-                .app_data(hb_data)
+                .app_data(web_context)
                 .wrap(cookie_auth)
                 .wrap(
                     CookieSession::private(&[0; 32]) // <- create cookie based session middleware
@@ -192,6 +242,7 @@ async fn async_main() -> std::io::Result<()> {
                     EmptyMutation::<Context>::new(),
                     EmptySubscription::<Context>::new(),
                 ))
+                .data(auth.clone())
                 .wrap(HttpAuthentication::bearer(validator))
                 .service(handle_graphql_get)
                 .service(handle_graphql_post)
