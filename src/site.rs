@@ -1,7 +1,7 @@
 
-use serde::Deserialize;
+use serde::{Serialize, Deserialize};
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SiteList {
     sites: Vec<Site>,
 }
@@ -11,7 +11,14 @@ impl SiteList {
         SiteList{ sites: Vec::new()}
     }
 }
-#[derive(Deserialize, Debug, Clone)]
+
+impl SiteList {
+    pub fn sites(&self) -> &Vec<Site> {
+        &self.sites
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Site {
     name: String,
     description: Option<String>,
