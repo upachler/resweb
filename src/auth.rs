@@ -2,14 +2,21 @@ use actix_web::client::Client;
 use alcoholic_jwt::{token_kid, validate, Validation, JWK, JWKS};
 use serde::{Deserialize, Serialize};
 
-use crate::graphql_schema;
 
-const AUTHORITY_URI: &str = "http://localhost:8080/auth/realms/test";
-
-struct OIDCAuth {
+pub struct OidcAuth {
     client_id: String,
     client_secret: Option<String>,
     authority_uri: String,
+}
+
+impl OidcAuth {
+    pub fn new(authority_uri: String, client_id: &str, client_secret: Option<&str>) -> Self {
+        OidcAuth {
+            authority_uri,
+            client_id: client_id.into(),
+            client_secret: client_secret.map(String::from),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -48,43 +55,45 @@ async fn fetch_jwks(client: &Client, uri: &str) -> Result<JWKS, Box<dyn std::err
     Ok(jwks)
 }
 
-pub async fn get_oidc_config() -> Result<OidcConfig, Box<dyn std::error::Error>> {
-    provide_oidc_config(&Client::default()).await
-}
+impl OidcAuth {
+    pub async fn get_oidc_config(&self) -> Result<OidcConfig, Box<dyn std::error::Error>> {
+        self.provide_oidc_config(&Client::default()).await
+    }
 
-async fn provide_oidc_config(client: &Client) -> Result<OidcConfig, Box<dyn std::error::Error>> {
-    let oidc_config_uri = String::from(AUTHORITY_URI) + "/.well-known/openid-configuration";
+    async fn provide_oidc_config(&self, client: &Client) -> Result<OidcConfig, Box<dyn std::error::Error>> {
+        let oidc_config_uri = String::from(&self.authority_uri) + "/.well-known/openid-configuration";
 
-    let mut res = client.get(oidc_config_uri)
-        .send()
-        .await?;
-    let oidc_config =
-        res.json::<OidcConfig>()
-        .await?;
+        let mut res = client.get(oidc_config_uri)
+            .send()
+            .await?;
+        let oidc_config =
+            res.json::<OidcConfig>()
+            .await?;
 
-    Ok(oidc_config)
-}
+        Ok(oidc_config)
+    }
 
-async fn provide_jwk(kid: &str) -> Result<JWK, Box<dyn std::error::Error>> {
-    let client = Client::default();
-    let oidc_config = provide_oidc_config(&client).await?;
-    let jwks = fetch_jwks(&client, &oidc_config.jwks_uri).await?;
-    println!("jwks: {:?}", jwks);
+    async fn provide_jwk(&self, kid: &str) -> Result<JWK, Box<dyn std::error::Error>> {
+        let client = Client::default();
+        let oidc_config = self.provide_oidc_config(&client).await?;
+        let jwks = fetch_jwks(&client, &oidc_config.jwks_uri).await?;
+        println!("jwks: {:?}", jwks);
 
-    jwks.find(kid)
-        .map(|jwk| jwk.clone())
-        .ok_or_else(|| crate::Error::CannotFindAuthorizationSigningKey(kid.into()).into())
-}
+        jwks.find(kid)
+            .map(|jwk| jwk.clone())
+            .ok_or_else(|| crate::Error::CannotFindAuthorizationSigningKey(kid.into()).into())
+    }
 
-pub async fn validate_token(token: &str) -> Result<bool, crate::Error> {
-    let validations = vec![Validation::Issuer(AUTHORITY_URI.into()), Validation::SubjectPresent];
-    let kid = match token_kid(&token) {
-        Ok(res) => res.expect("failed to decode kid"),
-        Err(_) => return Err(crate::Error::JWKSFetchError),
-    };
-    let jwk = provide_jwk(&kid).await.expect("Specified key not found in set");
-    let res = validate(token, &jwk, validations);
-    Ok(res.is_ok())
+    pub async fn validate_token(&self, token: &str) -> Result<bool, crate::Error> {
+        let validations = vec![Validation::Issuer(self.authority_uri.clone()), Validation::SubjectPresent];
+        let kid = match token_kid(&token) {
+            Ok(res) => res.expect("failed to decode kid"),
+            Err(_) => return Err(crate::Error::JWKSFetchError),
+        };
+        let jwk = self.provide_jwk(&kid).await.expect("Specified key not found in set");
+        let res = validate(token, &jwk, validations);
+        Ok(res.is_ok())
+    }
 }
 
 #[derive(Serialize)]
@@ -96,44 +105,48 @@ struct AuthServerTokenExchangePayload<'a> {
     state: Option<&'a str>,
 }
 
-pub async fn exchange_code_for_token(code: &str, redirect_uri: Option<&str>, state: Option<&str>) -> Result<TokenResponse,crate::Error> {
-    let client = Client::new();
-    
-    let oidc_config = match provide_oidc_config(&client).await {
-        Ok(c) => c,
-        Err(e) => return Err(crate::Error::TokenExchangeFailure(e.to_string()))
-    };
+impl OidcAuth {
+    pub async fn exchange_code_for_token(&self, code: &str, redirect_uri: Option<&str>, state: Option<&str>) -> Result<TokenResponse,crate::Error> {
+        let client = Client::new();
+        
+        let oidc_config = match self.provide_oidc_config(&client).await {
+            Ok(c) => c,
+            Err(e) => return Err(crate::Error::TokenExchangeFailure(e.to_string()))
+        };
 
-    let q = AuthServerTokenExchangePayload {
-        grant_type: "authorization_code",
-        client_id: "resweb",
-        code,
-        state,
-        redirect_uri
-    };
-    let post_result = client.post(&oidc_config.token_endpoint)
-    .send_form(&q)
-    .await;
-
-    let mut response = match post_result {
-        Err(e) => return Err(crate::Error::TokenExchangeFailure(e.to_string())),
-        Ok(r) => r
-    };
-
-    let resonse_status = response.status().as_u16();
-    return match resonse_status {
-        200 => {
-            match response.json::<TokenResponse>().await {
-                Ok(r) => Ok(r),
-                Err(e) => return Err(crate::Error::TokenExchangeFailure(e.to_string()))
-            }
+        let q = AuthServerTokenExchangePayload {
+            grant_type: "authorization_code",
+            client_id: &self.client_id,
+            code,
+            state,
+            redirect_uri
+        };
+        let mut post_req = client.post(&oidc_config.token_endpoint);
+        if let Some(client_secret) = &self.client_secret {
+            post_req = post_req.basic_auth(&self.client_id, Some(client_secret));
         }
-        400 => {
-            match response.json::<ErrorResponse>().await {
-                Ok(r) => Err(crate::Error::TokenExchangeResponseError(r)),
-                Err(e) => return Err(crate::Error::TokenExchangeFailure(e.to_string()))
+        let post_result = post_req.send_form(&q).await;
+
+        let mut response = match post_result {
+            Err(e) => return Err(crate::Error::TokenExchangeFailure(e.to_string())),
+            Ok(r) => r
+        };
+
+        let resonse_status = response.status().as_u16();
+        return match resonse_status {
+            200 => {
+                match response.json::<TokenResponse>().await {
+                    Ok(r) => Ok(r),
+                    Err(e) => return Err(crate::Error::TokenExchangeFailure(e.to_string()))
+                }
             }
-        }
-        _ => return Err(crate::Error::TokenExchangeFailure("invalid auth server token endpoint response status code ".to_owned() + &resonse_status.to_string()))
-    };
+            400 => {
+                match response.json::<ErrorResponse>().await {
+                    Ok(r) => Err(crate::Error::TokenExchangeResponseError(r)),
+                    Err(e) => return Err(crate::Error::TokenExchangeFailure(e.to_string()))
+                }
+            }
+            _ => return Err(crate::Error::TokenExchangeFailure("invalid auth server token endpoint response status code ".to_owned() + &resonse_status.to_string()))
+        };
+    }
 }
