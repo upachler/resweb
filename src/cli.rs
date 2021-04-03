@@ -1,4 +1,4 @@
-use std::{fs::File, path::{PathBuf}};
+use std::{fs::File, net::IpAddr, path::{PathBuf}, str::FromStr};
 use serde::Deserialize;
 
 use clap::{App, Arg};
@@ -11,6 +11,7 @@ const CARGO_PKG_NAME: &'static str = env!("CARGO_PKG_NAME");
 #[derive(Deserialize, Debug)]
 struct AppConfigContent {
     port: u16,
+    interface_addresses: Option<Vec<String>>,
     static_file_path: Option<String>,
     authorization_server_url: String,
     client_id: String,
@@ -37,8 +38,34 @@ impl AppConfigContent {
             Ok(u) => u,
             Err(e) => return Err(e.to_string())
         };
+
+        // parse interface addresses - if none are given, attempt to determine
+        // all existing interfaces and use all of them for binding
+        let interface_addresses = if let Some(a) = &self.interface_addresses {
+            a.clone()
+        } else {
+            Vec::new()
+        };
+        let interface_addresses = if !interface_addresses.is_empty() {
+            let converted_ifs = interface_addresses.iter()
+            .map(|addr_s|IpAddr::from_str(addr_s))
+            .collect::<Vec<_>>();
+            if let Some(err) = converted_ifs.iter().find_map(|r|r.as_ref().err()) {
+                return Err(String::from("cannot parse interface_addresses: ") + &err.to_string())
+            }
+            converted_ifs.iter()
+            .map(|r|r.as_ref().unwrap().clone())
+            .collect::<Vec<_>>()
+        } else {
+            match get_if_addrs::get_if_addrs() {
+                Ok(addrs) => addrs.iter().map(|i|i.ip()).collect(),
+                Err(e) => return Err(String::from("error finding all available interfaces failed (search attempted because none were specified): ") + &e.to_string())
+            }
+        };
+
         Ok(crate::AppConfig{
             port: self.port,
+            interface_addresses: interface_addresses,
             authorization_server_url,
             site_list: self.site_list.clone(),
             client_id: self.client_id.clone(),
@@ -52,6 +79,7 @@ impl Default for AppConfigContent {
         AppConfigContent {
             port: 8081,
             static_file_path: None,
+            interface_addresses: None,
             authorization_server_url: "".into(),
             client_id: "".into(),
             site_list: crate::site::SiteList::new()

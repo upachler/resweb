@@ -19,7 +19,7 @@
                     "kind": "bin"
                 }
             },
-            "args": [],
+            "args": ["resweb.yaml"],
             "cwd": "${workspaceFolder}"
         },
         {
