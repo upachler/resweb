@@ -19,13 +19,7 @@ impl OidcAuth {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct Claims {
-    sub: String,
-    company: String,
-    exp: usize,
-}
-
+pub struct Claims(serde_json::Value);
 
 #[derive(Deserialize, Clone, Debug)]
 pub struct OidcConfig {
@@ -84,15 +78,19 @@ impl OidcAuth {
             .ok_or_else(|| crate::Error::CannotFindAuthorizationSigningKey(kid.into()).into())
     }
 
-    pub async fn validate_token(&self, token: &str) -> Result<bool, crate::Error> {
-        let validations = vec![Validation::Issuer(self.authority_uri.clone()), Validation::SubjectPresent];
+    pub async fn validate_token(&self, token: &str) -> Result<Claims, crate::Error> {
+        let validations = vec![Validation::NotExpired, Validation::Issuer(self.authority_uri.clone()), Validation::SubjectPresent];
         let kid = match token_kid(&token) {
             Ok(res) => res.expect("failed to decode kid"),
             Err(_) => return Err(crate::Error::JWKSFetchError),
         };
         let jwk = self.provide_jwk(&kid).await.expect("Specified key not found in set");
         let res = validate(token, &jwk, validations);
-        Ok(res.is_ok())
+        
+        match res {
+            Ok(c) => Ok(Claims(c.claims)),
+            Err(e) => Err(crate::Error::JWTValidationFailed),
+        }
     }
 }
 
