@@ -2,7 +2,7 @@
 use std::{future::{Future, Ready}, pin::Pin, sync::Arc, task::{Context, Poll}};
 
 use actix_session::UserSession;
-use actix_web::{Error, HttpResponse, dev::{Body, Service, ServiceRequest, ServiceResponse, Transform}, error::{ErrorBadRequest, ErrorInternalServerError}, web};
+use actix_web::{Error, HttpMessage, HttpResponse, dev::{Body, Service, ServiceRequest, ServiceResponse, Transform}, error::{ErrorBadRequest, ErrorInternalServerError}, web};
 use url::{Url};
 
 use crate::auth::OidcAuth;
@@ -61,22 +61,13 @@ where
     handler: H,
 }
 
-impl<S,H> Service for CookieAuthMiddleware<S,H>
+impl<S,H> CookieAuthMiddleware<S,H> 
 where
+    H: CookieAuthHandler,
     S: Service<Request = ServiceRequest, Response = ServiceResponse<Body>, Error = Error>,
     S::Future: 'static,
-    H: CookieAuthHandler,
 {
-    type Request = ServiceRequest;
-    type Response = ServiceResponse<Body>;
-    type Error = Error;
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
-
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.service.poll_ready(cx)
-    }
-
-    fn call(&mut self, req: ServiceRequest) -> Self::Future {
+    async fn do_stuff(&mut self, req: ServiceRequest) -> Result<ServiceResponse<Body>, Error>{
         // check if this request is a token exchange attempt
         if req.method() == http::Method::GET && req.uri().path() == self.handler.token_exchange_path() {
             let query_str = req.query_string();
@@ -99,40 +90,88 @@ where
         }
 
         // all other requests are checked for existing auth cookie sessions, and redirected if need be
-        let auth_r = req.get_session().get::<String>(SESSION_AUTH_KEY);
-        let _access_token_r = match auth_r {
-            Ok(Some(t)) => t,
-            Err(e) => return Box::pin(async {Err(e)}),
-            Ok(None) => {
-                let (hreq, _) = req.into_parts();
-                
-                let mut auth_request_uri = match Url::parse(&self.handler.auth_uri()) {
-                    Err(e) => return Box::pin(async move { Err(ErrorInternalServerError(e))}),
-                    Ok(u) => u
-                };
-                auth_request_uri.query_pairs_mut()
-                .append_pair("response_type", "code")
-                .append_pair("client_id", self.handler.client_id())
-                .append_pair("state", &hreq.uri().to_string());
 
-                let current_request_uri = String::new() + hreq.connection_info().scheme() + "://" + hreq.connection_info().host() + &hreq.uri().to_string();
-                
-                match token_exchange_url(self.handler.token_exchange_path(), &current_request_uri) {
-                    Ok(token_exchange_uri) => auth_request_uri
-                        .query_pairs_mut()
-                        .append_pair("redirect_uri", &token_exchange_uri),
-                    Err(e) => return Box::pin(async move {Err(ErrorBadRequest(e))})
-                };
-                    
-                let hres = HttpResponse::Found().header("location", auth_request_uri.to_string()).finish();
-                let res = ServiceResponse::new(hreq, hres);
-                return Box::pin(async move {
-                    Ok(res) 
-                })
-            },
-        };
+        // if we were already authorized by another stage during request processing,
+        // be happy and use those claims
+        let mut claims = req.extensions().get::<crate::auth::Claims>();
 
-        Box::pin(self.service.call(req))        
+        if claims.is_none() {
+
+            let auth_r = req.get_session().get::<String>(SESSION_AUTH_KEY);
+            let access_token_r = match auth_r {
+                Ok(t) => t,
+                Err(e)  => return Box::pin(async {Err(e)}),
+            };
+
+            // if we have a token, validate it and store it in request if valid
+            claims = if let Some(t) = access_token_r {
+                let r = self.handler.oidc_auth().validate_token(&t).await;
+                if let Ok(c) = r {
+                    req.extensions_mut().insert::<crate::auth::Claims>(c);
+                    Some(&c)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+        }
+
+        if claims.is_some() {
+            // if we finally have claims
+            return Box::pin(self.service.call(req))
+        } else {
+            // otherwise (no or invalid token, therefore no claims), 
+            // we redirect the user back to the authorization server
+            let (hreq, _) = req.into_parts();
+            
+            let mut auth_request_uri = match Url::parse(&self.handler.auth_uri()) {
+                Err(e) => return Box::pin(async move { Err(ErrorInternalServerError(e))}),
+                Ok(u) => u
+            };
+            auth_request_uri.query_pairs_mut()
+            .append_pair("response_type", "code")
+            .append_pair("client_id", self.handler.client_id())
+            .append_pair("state", &hreq.uri().to_string());
+
+            let current_request_uri = String::new() + hreq.connection_info().scheme() + "://" + hreq.connection_info().host() + &hreq.uri().to_string();
+            
+            match token_exchange_url(self.handler.token_exchange_path(), &current_request_uri) {
+                Ok(token_exchange_uri) => auth_request_uri
+                    .query_pairs_mut()
+                    .append_pair("redirect_uri", &token_exchange_uri),
+                Err(e) => return Box::pin(async move {Err(ErrorBadRequest(e))})
+            };
+                
+            let hres = HttpResponse::Found().header("location", auth_request_uri.to_string()).finish();
+            let res = ServiceResponse::new(hreq, hres);
+            return Box::pin(async move {
+                Ok(res) 
+            })
+        }
+    }
+}
+
+impl<S,H> Service for CookieAuthMiddleware<S,H>
+where
+    S: Service<Request = ServiceRequest, Response = ServiceResponse<Body>, Error = Error>,
+    S::Future: 'static,
+    H: CookieAuthHandler,
+{
+    type Request = ServiceRequest;
+    type Response = ServiceResponse<Body>;
+    type Error = Error;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.service.poll_ready(cx)
+    }
+
+    fn call(&mut self, req: ServiceRequest) -> Self::Future {
+        Box::pin(async {
+            self.do_stuff(req).await
+        })
+        
     }
 }
 

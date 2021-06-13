@@ -35,7 +35,8 @@ pub enum Error {
     JWKSFetchError,
     CannotFindAuthorizationSigningKey(String),
     TokenExchangeFailure(String),
-    TokenExchangeResponseError(auth::ErrorResponse)
+    TokenExchangeResponseError(auth::ErrorResponse),
+    JWTValidationFailed,
 }
 
 
@@ -71,6 +72,9 @@ impl fmt::Display for Error {
             }
             Error::TokenExchangeResponseError(r) => {
                 write!(f, "Authorization server returned an error response on token exchange: {:?}", r)
+            }
+            Error::JWTValidationFailed => {
+                write!(f, "token validation failed")
             }
         }
     }
@@ -144,13 +148,7 @@ async fn validator(
         .map(|data| data.clone())
         .unwrap();
     match auth.validate_token(credentials.token()).await {
-        Ok(res) => {
-            if res == true {
-                Ok(req)
-            } else {
-                Err(AuthenticationError::from(config).into())
-            }
-        }
+        Ok(res) => Ok(req),
         Err(_) => Err(AuthenticationError::from(config).into()),
     }
 }
