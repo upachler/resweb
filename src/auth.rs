@@ -89,7 +89,10 @@ impl OidcAuth {
         
         match res {
             Ok(c) => Ok(Claims(c.claims)),
-            Err(e) => Err(crate::Error::JWTValidationFailed),
+            Err(e) => {
+                eprintln!("token validation failed: {:?}; token was: {}", e, token);
+                Err(crate::Error::JWTValidationFailed)
+            },
         }
     }
 }
