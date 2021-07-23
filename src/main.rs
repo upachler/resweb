@@ -206,7 +206,10 @@ async fn async_main(app_config: AppConfig) -> std::io::Result<()> {
 
     let auth = Arc::new(OidcAuth::new(app_config.authorization_server_url.to_string(), &app_config.client_id, None));
     let oidc_config = match auth.get_oidc_config().await {
-        Err(_e) => return Ok(()),
+        Err(_e) => {
+            eprintln!("cannot load oidc config from IDP at {}", app_config.authorization_server_url.to_string());
+            return Ok(())
+        },
         Ok(c) => c
     };
 
