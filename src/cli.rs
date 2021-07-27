@@ -1,25 +1,34 @@
 use std::{fs::File, net::IpAddr, path::{PathBuf}, str::FromStr};
 use serde::Deserialize;
 
-use clap::{App, Arg};
+use clap::{App, Arg, SubCommand, AppSettings};
+
+use crate::{AppConfig, CommonConfig, InitTemplatesConfig};
 
 
 
 const CARGO_PKG_VERSION: &'static str = env!("CARGO_PKG_VERSION");
 const CARGO_PKG_NAME: &'static str = env!("CARGO_PKG_NAME");
 
+const SERVE_SCMD_NAME: &str = "serve";
+const INIT_TEMPLATES_SCMD_NAME: &str = "init-templates";
+const DEVELOPMENT_ARG_NAME: &str = "development";
+const TEMPLATE_DIR_ARG_NAME: &str = "template_dir";
+
 #[derive(Deserialize, Debug)]
-struct AppConfigContent {
+struct ServeConfigContent {
     port: u16,
     interface_addresses: Option<Vec<String>>,
     static_file_path: Option<String>,
     authorization_server_url: String,
     client_id: String,
     site_list: crate::site::SiteList,
+    #[serde(default)]
+    development: bool,
 }
 
-impl AppConfigContent {
-    fn into_config(&self) -> Result<crate::AppConfig,String> {
+impl ServeConfigContent {
+    fn into_config(&self) -> Result<crate::ServeConfig,String> {
         let static_file_path = match &self.static_file_path {
             None => None,
             Some(s) => {
@@ -63,26 +72,30 @@ impl AppConfigContent {
             }
         };
 
-        Ok(crate::AppConfig{
+        
+        Ok(crate::ServeConfig{
+            common: CommonConfig::default(),
             port: self.port,
-            interface_addresses: interface_addresses,
+            interface_addresses,
             authorization_server_url,
             site_list: self.site_list.clone(),
             client_id: self.client_id.clone(),
+            dev_mode_enabled: self.development,
             static_file_path
         })
     }
 }
 
-impl Default for AppConfigContent {
+impl Default for ServeConfigContent {
     fn default() -> Self {
-        AppConfigContent {
+        ServeConfigContent {
             port: 8081,
             static_file_path: None,
             interface_addresses: None,
             authorization_server_url: "".into(),
             client_id: "".into(),
-            site_list: crate::site::SiteList::new()
+            site_list: crate::site::SiteList::new(), 
+            development: false,
         }
     }
 }
@@ -90,47 +103,80 @@ impl Default for AppConfigContent {
 
 pub fn read_config() -> Result<crate::AppConfig, ()> {
 
-    let m = App::new(CARGO_PKG_NAME)
+    let am = App::new(CARGO_PKG_NAME)
     .version(CARGO_PKG_VERSION)
-    .arg(Arg::with_name("CONFIG_FILE")
-        .required(true)
-        .takes_value(true)
-        .help("configuration file in YAML format")
+    .setting(AppSettings::SubcommandRequiredElseHelp)
+    .subcommand(SubCommand::with_name(SERVE_SCMD_NAME)
+        .about((String::new() + "Runs " + CARGO_PKG_NAME + " in server mode, which is typically what you want.").as_str())
+        .arg(Arg::with_name("CONFIG_FILE")
+            .required(true)
+            .takes_value(true)
+            .help("configuration file in YAML format")
+        )
+        .arg(Arg::with_name("development")
+            .short("d")
+            .long("development")
+            .help("if specified, enables auto-reloading of handlebars templates from the template directory ")
+        )
+    )
+    .subcommand(SubCommand::with_name(INIT_TEMPLATES_SCMD_NAME)
+        .about("Generates a template directory. Run once before starting development")
+        .help((String::new() + "Generate a directory with handlebars templates that can be used as the basis for custom templates. The target directory can be configured using the --" + TEMPLATE_DIR_ARG_NAME + " switch.").as_str())
     )
     .get_matches();
 
-    
-    let config_file_path = m.value_of("CONFIG_FILE").unwrap();
+    let mut common = CommonConfig::default();
+    if let Some(m) = am.value_of(TEMPLATE_DIR_ARG_NAME) {
+        common.template_dir = m.into();
+    }
 
-    let config_file = match File::open(config_file_path) {
-        Ok(f) => f,
-        Err(e) => {
-            eprintln!("cannot open configuration file {}: {}", config_file_path, e.to_string());
-            return Err(())
+    if let Some(m) = am.subcommand_matches(SERVE_SCMD_NAME) {
+        let config_file_path = m.value_of("CONFIG_FILE").unwrap();
+
+        let config_file = match File::open(config_file_path) {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("cannot open configuration file {}: {}", config_file_path, e.to_string());
+                return Err(())
+            }
+        };
+
+        let r: serde_yaml::Result<ServeConfigContent> = if config_file_path.ends_with(".yaml") || config_file_path.ends_with(".yml") {
+            serde_yaml::from_reader(config_file)
+        } else {
+            eprintln!("config file name {} must end in .yml or .yaml", config_file_path);
+            return Err(());
+        };
+        
+        let cfg_content = match r {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                eprintln!("error parsing configuration file {}: {}", config_file_path, e.to_string());
+                return Err(())
+            }
+        };
+
+        let mut cfg = match cfg_content.into_config() {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("configuration validation failed:");
+                eprintln!("{}", e.to_string());
+                return Err(())
+            }
+        };
+
+        if let Some(v) = m.value_of(TEMPLATE_DIR_ARG_NAME) {
+            cfg.common.template_dir = String::from(v);
         }
-    };
+        
+        if m.is_present(DEVELOPMENT_ARG_NAME) {
+            cfg.dev_mode_enabled = true;
+        }
 
-    let r: serde_yaml::Result<AppConfigContent> = if config_file_path.ends_with(".yaml") || config_file_path.ends_with(".yml") {
-        serde_yaml::from_reader(config_file)
+        Ok(AppConfig::Serve(cfg))
+    } else if let Some(m) = am.subcommand_matches(SERVE_SCMD_NAME){
+        Ok(AppConfig::InitTemplates(InitTemplatesConfig { common }))
     } else {
-        eprintln!("config file name {} must end in .yml or .yaml", config_file_path);
-        return Err(());
-    };
-    
-    let cfg = match r {
-        Ok(cfg) => cfg,
-        Err(e) => {
-            eprintln!("error parsing configuration file {}: {}", config_file_path, e.to_string());
-            return Err(())
-        }
-    };
-
-    match cfg.into_config() {
-        Ok(c) => Ok(c),
-        Err(e) => {
-            eprintln!("configuration validation failed:");
-            eprintln!("{}", e.to_string());
-            Err(())
-        }
+        Err(())
     }
 }

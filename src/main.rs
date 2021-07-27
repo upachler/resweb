@@ -4,6 +4,7 @@ mod graphql_schema;
 mod cookie_auth;
 mod site;
 mod cli;
+mod templates;
 
 use actix_files::NamedFile;
 use actix_session::CookieSession;
@@ -14,6 +15,9 @@ use actix_web_httpauth::extractors::AuthenticationError;
 use actix_web_httpauth::middleware::HttpAuthentication;
 use auth::{OidcAuth};
 
+use std::fs::{DirBuilder, File};
+use std::io::Write;
+use std::path::Path;
 use std::{fmt, path::PathBuf, sync::Arc};
 
 
@@ -39,21 +43,45 @@ pub enum Error {
     JWTValidationFailed,
 }
 
+#[derive(Debug, Clone)]
+pub enum AppConfig {
+    Serve(ServeConfig),
+    InitTemplates(InitTemplatesConfig)
+}
 
 #[derive(Debug, Clone)]
-pub struct AppConfig {
+pub struct CommonConfig {
+    template_dir: String,
+}
+
+impl Default for CommonConfig {
+    fn default() -> Self {
+        CommonConfig {
+            template_dir: String::from("templates")
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ServeConfig {
+    common: CommonConfig,
     port: u16,
     interface_addresses: Vec<std::net::IpAddr>,
     static_file_path: Option<Box<std::path::Path>>,
     authorization_server_url: url::Url,
     client_id: String,
     site_list: site::SiteList,
+    dev_mode_enabled: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct InitTemplatesConfig {
+    common: CommonConfig
+}
 
 struct WebContext<'a> {
     hb: Handlebars<'a>,
-    app_config: AppConfig,
+    app_config: ServeConfig,
 }
 
 impl std::error::Error for Error {}
@@ -187,27 +215,34 @@ fn main() {
         Err(_) => std::process::exit(1)
     };
 
-    tokio::runtime::Builder::new()
-    .enable_all()
-    .build()
-    .unwrap()
-    .block_on(async_main(cfg))
-    .unwrap()
+    match cfg {
+        AppConfig::Serve(cfg) => {
+            tokio::runtime::Builder::new()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async_main(cfg))
+            .unwrap()
+        }
+        AppConfig::InitTemplates(cfg) => {
+            init_templates(&cfg);
+        }
+    }
 }
 
-async fn async_main(app_config: AppConfig) -> std::io::Result<()> {
-    let addrs = app_config.interface_addresses
+async fn async_main(serve_config: ServeConfig) -> std::io::Result<()> {
+    let addrs = serve_config.interface_addresses
     .iter()
     .filter(|ip|ip.is_ipv4())
-    .map(|ip|ip.to_string() + ":" + &app_config.port.to_string())
+    .map(|ip|ip.to_string() + ":" + &serve_config.port.to_string())
     .collect::<Vec<_>>();
     
     let _actix_sys = actix_web::rt::System::run_in_tokio("server", &tokio::task::LocalSet::new());
 
-    let auth = Arc::new(OidcAuth::new(app_config.authorization_server_url.to_string(), &app_config.client_id, None));
+    let auth = Arc::new(OidcAuth::new(serve_config.authorization_server_url.to_string(), &serve_config.client_id, None));
     let oidc_config = match auth.get_oidc_config().await {
         Err(_e) => {
-            eprintln!("cannot load oidc config from IDP at {}", app_config.authorization_server_url.to_string());
+            eprintln!("cannot load oidc config from IDP at {}", serve_config.authorization_server_url.to_string());
             return Ok(())
         },
         Ok(c) => c
@@ -215,8 +250,9 @@ async fn async_main(app_config: AppConfig) -> std::io::Result<()> {
 
     let mut actix_srv = HttpServer::new(move || {
         let mut hb = Handlebars::new();
-        hb.register_templates_directory(".html", "templates").unwrap();
-        let web_context = web::Data::new(WebContext{hb, app_config: app_config.clone()});
+        hb.set_dev_mode(serve_config.dev_mode_enabled);
+        hb.register_templates_directory(".html", &serve_config.common.template_dir).unwrap();
+        let web_context = web::Data::new(WebContext{hb, app_config: serve_config.clone()});
 
         let cookie_auth = cookie_auth::CookieAuth::new(ResWebCookieAuthHandler{
             oidc_auth: auth.clone(),
@@ -257,4 +293,32 @@ async fn async_main(app_config: AppConfig) -> std::io::Result<()> {
     }
 
     actix_srv.run().await
+}
+
+fn init_templates(cfg: &InitTemplatesConfig) -> Result<(),Box<dyn std::error::Error>> {
+    
+    match DirBuilder::new()
+        .recursive(true)
+        .create(&cfg.common.template_dir) {
+        Err(e) => return Err(Box::from(e)),
+        Ok(_) => (),
+    };
+
+    let p = Path::new(&cfg.common.template_dir);
+    let resources = templates::resources();
+    for file_content in resources.iter() {
+        let file_path = p.join(file_content.0);
+        let mut file = match File::create(file_path) {
+            Ok(f) => f,
+            Err(e) => return Err(Box::new(e)),
+        };
+        if let Err(e) = file.write_all(file_content.1) {
+            return Err(Box::new(e))
+        }
+    };
+    
+    println!("Created default templates for customization at path '{}'", &cfg.common.template_dir);
+    println!("To start customizing, run resweb in development mode (for details, run with --help)");
+
+    Ok(())
 }

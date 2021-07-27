@@ -21,5 +21,5 @@ alcoholic_jwt = "1.0.0"
 juniper = "0.15"
 juniper_actix = "0.2"
 http = "0.2.3"
-handlebars = {version="3.5.4", features=["dir_source"]}
+handlebars = {version="4.1.0", features=["dir_source"]}
 url = "2.2.1"
