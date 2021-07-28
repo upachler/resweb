@@ -31,6 +31,8 @@ use handlebars::Handlebars;
 
 use graphql_schema::{Context, Query, Schema};
 
+use crate::error::StringError;
+
 const CLIENT_ID: &str = "resweb";
 const GRAPHQL_PATH: &str = "/graphql";
 const EXCHANGE_TOKEN_PATH: &str = "/web/.exchange-token";
@@ -53,7 +55,7 @@ pub enum AppConfig {
 
 #[derive(Debug, Clone)]
 pub struct CommonConfig {
-    template_dir: String,
+    template_dir: Option<PathBuf>,
 }
 
 impl CommonConfig {
@@ -63,7 +65,7 @@ impl CommonConfig {
 impl Default for CommonConfig {
     fn default() -> Self {
         CommonConfig {
-            template_dir: String::from(Self::DEFAULT_TEMPLATE_DIR)
+            template_dir: None
         }
     }
 }
@@ -73,7 +75,6 @@ pub struct ServeConfig {
     common: CommonConfig,
     port: u16,
     interface_addresses: Vec<std::net::IpAddr>,
-    static_file_path: Option<Box<std::path::Path>>,
     authorization_server_url: url::Url,
     client_id: String,
     site_list: site::SiteList,
@@ -122,22 +123,33 @@ async fn hello() -> impl Responder {
 #[get("/{template_name:.*}")]
 async fn handle_web(req: HttpRequest, wc: web::Data<WebContext<'_>>, web::Path(template_name): web::Path<String>) -> impl Responder {
     if wc.hb.has_template(&template_name) {
-        match wc.hb.render(&template_name, wc.app_config.site_list.sites()) {
+        return match wc.hb.render(&template_name, wc.app_config.site_list.sites()) {
             Ok(body) => HttpResponse::Ok().body(body),
             Err(e) => HttpResponse::InternalServerError().body(e.desc)
         }
-    } else if let Some(path) = &wc.app_config.static_file_path {
-        // serve static files      
-        path
-        .join(PathBuf::from(&template_name))
-        .canonicalize().ok()
-        .filter(|p|p.starts_with(&path))
-        .and_then(|p|NamedFile::open(p).ok())
-        .and_then(|n| n.into_response(&req).ok())
-        .unwrap_or(HttpResponse::NotFound().finish())
-    } else {
-        HttpResponse::NotFound().finish()
     }
+
+
+    // check for non-template files on file system
+    if let Some(template_dir) = wc.app_config.common.template_dir.clone() {
+        let dir_content_response = template_dir
+            .join(PathBuf::from(&template_name))
+            .canonicalize().ok()
+            .filter(|p|p.starts_with(&template_dir))
+            .and_then(|p|NamedFile::open(p).ok())
+            .and_then(|n| n.into_response(&req).ok());
+        
+        if let Some(response) = dir_content_response {
+            return response
+        }
+    }
+
+    // check for non-template files in builtin list
+    if let Some(v) = templates::resources().get(template_name.as_str()) {
+        return HttpResponse::Ok().body(*v);
+    }
+
+    HttpResponse::NotFound().finish()
 }
 
 #[get("/graphql")]
@@ -235,7 +247,7 @@ fn main() {
         }
         AppConfig::InitTemplates(cfg) => {
             match init_templates(&cfg) {
-                Ok(_) => println!("templates written to directory '{}'", cfg.common.template_dir),
+                Ok(_) => println!("templates written to directory '{}'", cfg.common.template_dir.unwrap().to_string_lossy()),
                 Err(e) => eprintln!("could not write templates ({})", e)
             }
         }
@@ -277,7 +289,9 @@ async fn async_main(serve_config: ServeConfig) -> std::io::Result<()> {
                 Err(e) => panic!("could not parse internal template {}", e)
             }
         }
-        hb.register_templates_directory(HTML_SUFFIX, &serve_config.common.template_dir).unwrap();
+        if let Some(template_dir) = &serve_config.common.template_dir {
+            hb.register_templates_directory(HTML_SUFFIX, template_dir).unwrap();
+        }
         let web_context = web::Data::new(WebContext{hb, app_config: serve_config.clone()});
 
         let cookie_auth = cookie_auth::CookieAuth::new(ResWebCookieAuthHandler{
@@ -322,23 +336,26 @@ async fn async_main(serve_config: ServeConfig) -> std::io::Result<()> {
 }
 
 fn init_templates(cfg: &InitTemplatesConfig) -> Result<(),Box<dyn std::error::Error>> {
-    
+    let path = if let Some(d) = &cfg.common.template_dir {
+        d
+    } else {
+        return Err(Box::new(StringError::from("no template dir specified")))
+    };
+
     match DirBuilder::new()
         .recursive(true)
-        .create(&cfg.common.template_dir) {
+        .create(path) {
         Err(e) => return Err(Box::from(e)),
         Ok(_) => (),
     };
 
-    let p = Path::new(&cfg.common.template_dir);
     let resources = templates::resources();
     for file_content in resources.iter() {
-        let file_path = p.join(file_content.0);
+        let file_path = path.join(file_content.0);
         let mut file = match OpenOptions::new().write(true).create_new(true).open(&file_path) {
             Ok(f) => f,
             Err(e) => {
-                let file_name = file_path.as_os_str().to_str().unwrap();
-                eprintln!("error writing to '{}'", file_name);
+                eprintln!("error writing to '{}'", file_path.to_string_lossy());
                 return Err(Box::new(e))
             }
         };
@@ -347,7 +364,7 @@ fn init_templates(cfg: &InitTemplatesConfig) -> Result<(),Box<dyn std::error::Er
         }
     };
     
-    println!("Created default templates for customization at path '{}'", &cfg.common.template_dir);
+    println!("Created default templates for customization at path '{}'", path.to_string_lossy());
     println!("To start customizing, let {} serve in development mode. To find out how, consult the help, like this:\n", cli::CARGO_PKG_NAME);
     println!("\t{} help {}\n", cli::CARGO_PKG_NAME, cli::SERVE_SCMD_NAME);
 

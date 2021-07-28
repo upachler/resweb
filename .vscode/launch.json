@@ -19,8 +19,8 @@
                     "kind": "bin"
                 }
             },
-            //"args": ["serve", "resweb.yaml", "-d"],
-            "args": ["init-templates"],
+            "args": ["serve", "resweb.yaml", "-d"],
+            //"args": ["init-templates"],
             "cwd": "${workspaceFolder}"
         },
         {
