@@ -56,10 +56,14 @@ pub struct CommonConfig {
     template_dir: String,
 }
 
+impl CommonConfig {
+    pub const DEFAULT_TEMPLATE_DIR: &'static str = "templates";
+}
+
 impl Default for CommonConfig {
     fn default() -> Self {
         CommonConfig {
-            template_dir: String::from("templates")
+            template_dir: String::from(Self::DEFAULT_TEMPLATE_DIR)
         }
     }
 }
