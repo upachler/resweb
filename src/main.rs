@@ -5,6 +5,7 @@ mod cookie_auth;
 mod site;
 mod cli;
 mod templates;
+mod error;
 
 use actix_files::NamedFile;
 use actix_session::CookieSession;
@@ -15,7 +16,7 @@ use actix_web_httpauth::extractors::AuthenticationError;
 use actix_web_httpauth::middleware::HttpAuthentication;
 use auth::{OidcAuth};
 
-use std::fs::{DirBuilder, File};
+use std::fs::{DirBuilder, OpenOptions};
 use std::io::Write;
 use std::path::Path;
 use std::{fmt, path::PathBuf, sync::Arc};
@@ -33,6 +34,7 @@ use graphql_schema::{Context, Query, Schema};
 const CLIENT_ID: &str = "resweb";
 const GRAPHQL_PATH: &str = "/graphql";
 const EXCHANGE_TOKEN_PATH: &str = "/web/.exchange-token";
+const HTML_SUFFIX: &str = ".html";
 
 #[derive(fmt::Debug)]
 pub enum Error {
@@ -176,7 +178,7 @@ async fn validator(
         .map(|data| data.clone())
         .unwrap();
     match auth.validate_token(credentials.token()).await {
-        Ok(res) => Ok(req),
+        Ok(_res) => Ok(req),
         Err(_) => Err(AuthenticationError::from(config).into()),
     }
 }
@@ -212,7 +214,10 @@ fn main() {
     
     let cfg = match cli::read_config() {
         Ok(c) => c,
-        Err(_) => std::process::exit(1)
+        Err(e) => {
+            eprintln!("could not read config file {}", e);
+            std::process::exit(1)
+        }
     };
 
     match cfg {
@@ -225,7 +230,10 @@ fn main() {
             .unwrap()
         }
         AppConfig::InitTemplates(cfg) => {
-            init_templates(&cfg);
+            match init_templates(&cfg) {
+                Ok(_) => println!("templates written to directory '{}'", cfg.common.template_dir),
+                Err(e) => eprintln!("could not write templates ({})", e)
+            }
         }
     }
 }
@@ -251,7 +259,21 @@ async fn async_main(serve_config: ServeConfig) -> std::io::Result<()> {
     let mut actix_srv = HttpServer::new(move || {
         let mut hb = Handlebars::new();
         hb.set_dev_mode(serve_config.dev_mode_enabled);
-        hb.register_templates_directory(".html", &serve_config.common.template_dir).unwrap();
+        let builtins = templates::resources();
+        let builtin_templates = builtins
+            .iter()
+            .filter_map(|t| match t.0.strip_suffix(HTML_SUFFIX){
+                Some(n) => Some((n, t.1)),
+                None => None
+            });
+        
+        for t in builtin_templates {
+            match hb.register_template_string(t.0, String::from_utf8_lossy(t.1)) {
+                Ok(_) => (),
+                Err(e) => panic!("could not parse internal template {}", e)
+            }
+        }
+        hb.register_templates_directory(HTML_SUFFIX, &serve_config.common.template_dir).unwrap();
         let web_context = web::Data::new(WebContext{hb, app_config: serve_config.clone()});
 
         let cookie_auth = cookie_auth::CookieAuth::new(ResWebCookieAuthHandler{
@@ -308,9 +330,13 @@ fn init_templates(cfg: &InitTemplatesConfig) -> Result<(),Box<dyn std::error::Er
     let resources = templates::resources();
     for file_content in resources.iter() {
         let file_path = p.join(file_content.0);
-        let mut file = match File::create(file_path) {
+        let mut file = match OpenOptions::new().write(true).create_new(true).open(&file_path) {
             Ok(f) => f,
-            Err(e) => return Err(Box::new(e)),
+            Err(e) => {
+                let file_name = file_path.as_os_str().to_str().unwrap();
+                eprintln!("error writing to '{}'", file_name);
+                return Err(Box::new(e))
+            }
         };
         if let Err(e) = file.write_all(file_content.1) {
             return Err(Box::new(e))
@@ -318,7 +344,8 @@ fn init_templates(cfg: &InitTemplatesConfig) -> Result<(),Box<dyn std::error::Er
     };
     
     println!("Created default templates for customization at path '{}'", &cfg.common.template_dir);
-    println!("To start customizing, run resweb in development mode (for details, run with --help)");
+    println!("To start customizing, let {} serve in development mode. To find out how, consult the help, like this:\n", cli::CARGO_PKG_NAME);
+    println!("\t{} help {}\n", cli::CARGO_PKG_NAME, cli::SERVE_SCMD_NAME);
 
     Ok(())
 }

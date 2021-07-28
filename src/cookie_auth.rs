@@ -2,8 +2,7 @@
 use std::{cell::RefCell, future::{Future, Ready}, pin::Pin, sync::Arc, task::{Context, Poll}};
 
 use actix_session::UserSession;
-use actix_web::{Error, HttpMessage, HttpRequest, HttpResponse, dev::{Body, Service, ServiceRequest, ServiceResponse, Transform}, error::{ErrorBadRequest, ErrorInternalServerError}, web};
-use http::Response;
+use actix_web::{Error, HttpMessage, HttpResponse, dev::{Body, Service, ServiceRequest, ServiceResponse, Transform}, error::{ErrorBadRequest, ErrorInternalServerError}, web};
 use url::{Url};
 
 use crate::auth::OidcAuth;
