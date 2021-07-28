@@ -1,7 +1,7 @@
 use std::{error::Error, fs::File, net::IpAddr, path::{PathBuf}, str::FromStr};
 use serde::Deserialize;
 
-use clap::{App, Arg, SubCommand, AppSettings};
+use clap::{App, AppSettings, Arg, ArgMatches, SubCommand};
 
 use crate::{AppConfig, CommonConfig, InitTemplatesConfig, error::StringError};
 
@@ -13,7 +13,7 @@ pub const CARGO_PKG_NAME: &'static str = env!("CARGO_PKG_NAME");
 pub const SERVE_SCMD_NAME: &str = "serve";
 pub const INIT_TEMPLATES_SCMD_NAME: &str = "init-templates";
 pub const DEVELOPMENT_ARG_NAME: &str = "development";
-pub const TEMPLATE_DIR_ARG_NAME: &str = "template_dir";
+pub const TEMPLATE_DIR_ARG_NAME: &str = "template-dir";
 
 #[derive(Deserialize, Debug)]
 struct ServeConfigContent {
@@ -108,8 +108,9 @@ pub fn read_config() -> Result<crate::AppConfig, Box<dyn Error>> {
     .setting(AppSettings::SubcommandRequiredElseHelp)
     .arg(Arg::with_name(TEMPLATE_DIR_ARG_NAME)
         .takes_value(true)
-        .help("specifies the path to the template directory, if customizied templates should be used")
+        .help(&std::fmt::format(std::format_args!("specifies the path to the template directory, if customizied templates should be used. The value defaults to {} and is ignored if the directory does not exist.", CommonConfig::DEFAULT_TEMPLATE_DIR)))
         .short("t")
+        .long(TEMPLATE_DIR_ARG_NAME)
     )
     .subcommand(SubCommand::with_name(SERVE_SCMD_NAME)
         .about((String::new() + "Runs " + CARGO_PKG_NAME + " in server mode, which is typically what you want.").as_str())
@@ -118,9 +119,9 @@ pub fn read_config() -> Result<crate::AppConfig, Box<dyn Error>> {
             .takes_value(true)
             .help("configuration file in YAML format")
         )
-        .arg(Arg::with_name("development")
+        .arg(Arg::with_name(DEVELOPMENT_ARG_NAME)
             .short("d")
-            .long("development")
+            .long(DEVELOPMENT_ARG_NAME)
             .help("if specified, enables auto-reloading of handlebars templates from the template directory ")
         )
     )
@@ -129,11 +130,6 @@ pub fn read_config() -> Result<crate::AppConfig, Box<dyn Error>> {
         .help((String::new() + "Generate a directory with handlebars templates that can be used as the basis for custom templates. The target directory can be configured using the --" + TEMPLATE_DIR_ARG_NAME + " switch.").as_str())
     )
     .get_matches();
-
-    let mut common = CommonConfig::default();
-    if let Some(m) = am.value_of(TEMPLATE_DIR_ARG_NAME) {
-        common.template_dir = m.into();
-    }
 
     if let Some(m) = am.subcommand_matches(SERVE_SCMD_NAME) {
         let config_file_path = m.value_of("CONFIG_FILE").unwrap();
@@ -171,18 +167,22 @@ pub fn read_config() -> Result<crate::AppConfig, Box<dyn Error>> {
             }
         };
 
-        if let Some(v) = m.value_of(TEMPLATE_DIR_ARG_NAME) {
-            cfg.common.template_dir = String::from(v);
-        }
-        
         if m.is_present(DEVELOPMENT_ARG_NAME) {
             cfg.dev_mode_enabled = true;
         }
-
+        init_common_config(&am, &mut cfg.common);
         Ok(AppConfig::Serve(cfg))
-    } else if let Some(_) = am.subcommand_matches(INIT_TEMPLATES_SCMD_NAME){
-        Ok(AppConfig::InitTemplates(InitTemplatesConfig { common }))
+    } else if let Some(_m) = am.subcommand_matches(INIT_TEMPLATES_SCMD_NAME){
+        let mut cfg = InitTemplatesConfig { common: CommonConfig::default() };
+        init_common_config(&am, &mut cfg.common);
+        Ok(AppConfig::InitTemplates(cfg))
     } else {
         Err(Box::new(StringError::from("no command specified, should never happen as clap's configuration should prevent that")))
+    }
+}
+
+fn init_common_config(m: &ArgMatches, common: &mut CommonConfig) {
+    if let Some(v) = m.value_of(TEMPLATE_DIR_ARG_NAME) {
+        common.template_dir = String::from(v);
     }
 }
