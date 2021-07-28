@@ -1,4 +1,4 @@
-use std::{error::Error, fs::File, net::IpAddr, path::{PathBuf}, str::FromStr};
+use std::{error::Error, fs::{File, canonicalize}, net::IpAddr, path::{PathBuf}, str::FromStr};
 use serde::Deserialize;
 
 use clap::{App, AppSettings, Arg, ArgMatches, SubCommand};
@@ -19,7 +19,6 @@ pub const TEMPLATE_DIR_ARG_NAME: &str = "template-dir";
 struct ServeConfigContent {
     port: u16,
     interface_addresses: Option<Vec<String>>,
-    static_file_path: Option<String>,
     authorization_server_url: String,
     client_id: String,
     site_list: crate::site::SiteList,
@@ -29,20 +28,6 @@ struct ServeConfigContent {
 
 impl ServeConfigContent {
     fn into_config(&self) -> Result<crate::ServeConfig,String> {
-        let static_file_path = match &self.static_file_path {
-            None => None,
-            Some(s) => {
-                match PathBuf::from(s).canonicalize() {
-                    Err(e) => return Err(e.to_string()),
-                    Ok(p) => { 
-                        if !p.exists() {
-                            return Err("static_file_path does not exist".into())
-                        }
-                        Some(Box::from(p.as_path().clone()))
-                    },
-                }
-            }
-        };
         let authorization_server_url = match url::Url::parse(&self.authorization_server_url) {
             Ok(u) => u,
             Err(e) => return Err(e.to_string())
@@ -81,7 +66,6 @@ impl ServeConfigContent {
             site_list: self.site_list.clone(),
             client_id: self.client_id.clone(),
             dev_mode_enabled: self.development,
-            static_file_path
         })
     }
 }
@@ -90,7 +74,6 @@ impl Default for ServeConfigContent {
     fn default() -> Self {
         ServeConfigContent {
             port: 8081,
-            static_file_path: None,
             interface_addresses: None,
             authorization_server_url: "".into(),
             client_id: "".into(),
@@ -170,19 +153,44 @@ pub fn read_config() -> Result<crate::AppConfig, Box<dyn Error>> {
         if m.is_present(DEVELOPMENT_ARG_NAME) {
             cfg.dev_mode_enabled = true;
         }
-        init_common_config(&am, &mut cfg.common);
-        Ok(AppConfig::Serve(cfg))
+        match init_common_config(&am, &mut cfg.common, true) {
+            Ok(_) => Ok(AppConfig::Serve(cfg)),
+            Err(e) => Err(e)
+        }
+        
     } else if let Some(_m) = am.subcommand_matches(INIT_TEMPLATES_SCMD_NAME){
         let mut cfg = InitTemplatesConfig { common: CommonConfig::default() };
-        init_common_config(&am, &mut cfg.common);
-        Ok(AppConfig::InitTemplates(cfg))
+        match init_common_config(&am, &mut cfg.common, false) {
+            Ok(_) => Ok(AppConfig::InitTemplates(cfg)),
+            Err(e) => Err(e)
+        }
     } else {
         Err(Box::new(StringError::from("no command specified, should never happen as clap's configuration should prevent that")))
     }
 }
 
-fn init_common_config(m: &ArgMatches, common: &mut CommonConfig) {
+fn init_common_config(m: &ArgMatches, common: &mut CommonConfig, require_templatedir_exists: bool) -> Result<(), Box<dyn Error>> {
     if let Some(v) = m.value_of(TEMPLATE_DIR_ARG_NAME) {
-        common.template_dir = String::from(v);
+        match PathBuf::from(v).canonicalize() {
+            Ok(p) => {
+                if require_templatedir_exists && !p.exists(){
+                    let msg = std::fmt::format(format_args!("specified path '{}' does not exist", p.to_string_lossy()));
+                    Err(Box::new(StringError::from(msg)))
+                } else {
+                    common.template_dir = Some(p);
+                    Ok(())
+                }
+            },
+            Err(e) => Err(Box::new(e))
+        }
+    } else {
+        match PathBuf::from(CommonConfig::DEFAULT_TEMPLATE_DIR)
+            .canonicalize() {
+            Ok(p) => {
+                common.template_dir = Some(p); 
+                Ok(())
+            },
+            Err(e) => Err(Box::new(e)),
+        }
     }
 }
