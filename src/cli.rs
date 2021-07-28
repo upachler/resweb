@@ -1,19 +1,19 @@
-use std::{fs::File, net::IpAddr, path::{PathBuf}, str::FromStr};
+use std::{error::Error, fs::File, net::IpAddr, path::{PathBuf}, str::FromStr};
 use serde::Deserialize;
 
 use clap::{App, Arg, SubCommand, AppSettings};
 
-use crate::{AppConfig, CommonConfig, InitTemplatesConfig};
+use crate::{AppConfig, CommonConfig, InitTemplatesConfig, error::StringError};
 
 
 
-const CARGO_PKG_VERSION: &'static str = env!("CARGO_PKG_VERSION");
-const CARGO_PKG_NAME: &'static str = env!("CARGO_PKG_NAME");
+pub const CARGO_PKG_VERSION: &'static str = env!("CARGO_PKG_VERSION");
+pub const CARGO_PKG_NAME: &'static str = env!("CARGO_PKG_NAME");
 
-const SERVE_SCMD_NAME: &str = "serve";
-const INIT_TEMPLATES_SCMD_NAME: &str = "init-templates";
-const DEVELOPMENT_ARG_NAME: &str = "development";
-const TEMPLATE_DIR_ARG_NAME: &str = "template_dir";
+pub const SERVE_SCMD_NAME: &str = "serve";
+pub const INIT_TEMPLATES_SCMD_NAME: &str = "init-templates";
+pub const DEVELOPMENT_ARG_NAME: &str = "development";
+pub const TEMPLATE_DIR_ARG_NAME: &str = "template_dir";
 
 #[derive(Deserialize, Debug)]
 struct ServeConfigContent {
@@ -101,11 +101,16 @@ impl Default for ServeConfigContent {
 }
 
 
-pub fn read_config() -> Result<crate::AppConfig, ()> {
+pub fn read_config() -> Result<crate::AppConfig, Box<dyn Error>> {
 
     let am = App::new(CARGO_PKG_NAME)
     .version(CARGO_PKG_VERSION)
     .setting(AppSettings::SubcommandRequiredElseHelp)
+    .arg(Arg::with_name(TEMPLATE_DIR_ARG_NAME)
+        .takes_value(true)
+        .help("specifies the path to the template directory, if customizied templates should be used")
+        .short("t")
+    )
     .subcommand(SubCommand::with_name(SERVE_SCMD_NAME)
         .about((String::new() + "Runs " + CARGO_PKG_NAME + " in server mode, which is typically what you want.").as_str())
         .arg(Arg::with_name("CONFIG_FILE")
@@ -137,31 +142,32 @@ pub fn read_config() -> Result<crate::AppConfig, ()> {
             Ok(f) => f,
             Err(e) => {
                 eprintln!("cannot open configuration file {}: {}", config_file_path, e.to_string());
-                return Err(())
+                return Err(Box::new(e))
             }
         };
 
         let r: serde_yaml::Result<ServeConfigContent> = if config_file_path.ends_with(".yaml") || config_file_path.ends_with(".yml") {
             serde_yaml::from_reader(config_file)
         } else {
-            eprintln!("config file name {} must end in .yml or .yaml", config_file_path);
-            return Err(());
+            let msg = std::fmt::format(format_args!("config file name {} must end in .yml or .yaml", config_file_path));
+            eprintln!("{}", msg);
+            return Err(Box::new(StringError::from(msg)));
         };
         
         let cfg_content = match r {
             Ok(cfg) => cfg,
             Err(e) => {
                 eprintln!("error parsing configuration file {}: {}", config_file_path, e.to_string());
-                return Err(())
+                return Err(Box::new(e))
             }
         };
 
         let mut cfg = match cfg_content.into_config() {
             Ok(v) => v,
-            Err(e) => {
+            Err(msg) => {
                 eprintln!("configuration validation failed:");
-                eprintln!("{}", e.to_string());
-                return Err(())
+                eprintln!("{}", msg.to_string());
+                return Err(Box::new(StringError::from(msg)))
             }
         };
 
@@ -174,9 +180,9 @@ pub fn read_config() -> Result<crate::AppConfig, ()> {
         }
 
         Ok(AppConfig::Serve(cfg))
-    } else if let Some(m) = am.subcommand_matches(SERVE_SCMD_NAME){
+    } else if let Some(_) = am.subcommand_matches(INIT_TEMPLATES_SCMD_NAME){
         Ok(AppConfig::InitTemplates(InitTemplatesConfig { common }))
     } else {
-        Err(())
+        Err(Box::new(StringError::from("no command specified, should never happen as clap's configuration should prevent that")))
     }
 }
