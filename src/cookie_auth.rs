@@ -10,9 +10,14 @@ use crate::auth::OidcAuth;
 const SESSION_AUTH_KEY: &str = "auth_r";
 
 pub trait CookieAuthHandler : Clone {
+    const DEFAULT_SCOPES: &'static str = "openid";
+
     fn oidc_auth(&self) -> Arc<OidcAuth>;
     fn client_id(&self) -> &str;
     fn auth_uri(&self) -> &str;
+    fn scopes(&self) -> &str {
+        Self::DEFAULT_SCOPES
+    }
     fn token_exchange_path(&self) -> &str;
 }
 
@@ -142,7 +147,8 @@ where
         auth_request_uri.query_pairs_mut()
         .append_pair("response_type", "code")
         .append_pair("client_id", handler.client_id())
-        .append_pair("state", &hreq.uri().to_string());
+        .append_pair("state", &hreq.uri().to_string())
+        .append_pair("scope", handler.scopes());
 
         let current_request_uri = String::new() + hreq.connection_info().scheme() + "://" + hreq.connection_info().host() + &hreq.uri().to_string();
         

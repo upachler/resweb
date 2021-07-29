@@ -14,7 +14,8 @@ use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Resp
 use actix_web_httpauth::extractors::bearer::{BearerAuth, Config};
 use actix_web_httpauth::extractors::AuthenticationError;
 use actix_web_httpauth::middleware::HttpAuthentication;
-use auth::{OidcAuth};
+use auth::{Claims, OidcAuth};
+use site::{Operator, Site};
 
 use std::fs::{DirBuilder, OpenOptions};
 use std::io::Write;
@@ -77,6 +78,7 @@ pub struct ServeConfig {
     interface_addresses: Vec<std::net::IpAddr>,
     authorization_server_url: url::Url,
     client_id: String,
+    scope: String,
     site_list: site::SiteList,
     dev_mode_enabled: bool,
 }
@@ -120,10 +122,45 @@ async fn hello() -> impl Responder {
     HttpResponse::Found().header("location", "/web/dashboard").finish()
 }
 
+fn is_site_for_claims(site: &Site, claims: &Claims) -> bool {
+    
+    for r in &site.claim_rules {
+
+        let v = if let Some(v) = claims.get_path(r.path.as_str()) {
+            v
+        } else {
+            continue
+        };
+
+        let rule_matches = match r.operator.clone() {
+            Operator::Equals => v.eq(&r.value),
+            Operator::Contains => if let Some(a) = v.as_array() {
+                    a.contains(&r.value)
+                } else {
+                    false
+                }
+        };
+
+        if rule_matches {
+            return true
+        }
+    }
+    
+    false
+}
+
 #[get("/{template_name:.*}")]
 async fn handle_web(req: HttpRequest, wc: web::Data<WebContext<'_>>, web::Path(template_name): web::Path<String>) -> impl Responder {
     if wc.hb.has_template(&template_name) {
-        return match wc.hb.render(&template_name, wc.app_config.site_list.sites()) {
+
+        let sites = if let Some(claims) = req.extensions().get::<Claims>() {
+            wc.app_config.site_list.sites()
+            .iter().filter(|site|is_site_for_claims(site, claims))
+            .collect()    
+        } else {
+            Vec::new()
+        };
+        return match wc.hb.render(&template_name, &sites) {
             Ok(body) => HttpResponse::Ok().body(body),
             Err(e) => HttpResponse::InternalServerError().body(e.desc)
         }

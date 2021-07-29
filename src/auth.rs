@@ -2,7 +2,6 @@ use actix_web::client::Client;
 use alcoholic_jwt::{token_kid, validate, Validation, JWK, JWKS};
 use serde::{Deserialize, Serialize};
 
-
 pub struct OidcAuth {
     client_id: String,
     client_secret: Option<String>,
@@ -20,6 +19,25 @@ impl OidcAuth {
 }
 
 pub struct Claims(serde_json::Value);
+
+impl Claims {
+    pub fn get_path(&self, path: &str) -> Option<&serde_json::Value> {
+        let mut it = path.split(".");
+        let mut key_opt = it.next();
+
+        let mut v_opt = Some(&self.0);
+        while let Some(key) = key_opt {
+            if let Some(v) = v_opt {
+                v_opt = v.get(key)
+            } else {
+                break;
+            }
+            key_opt = it.next();
+        }
+
+        v_opt
+    }
+}
 
 #[derive(Deserialize, Clone, Debug)]
 pub struct OidcConfig {
@@ -54,15 +72,15 @@ impl OidcAuth {
         self.provide_oidc_config(&Client::default()).await
     }
 
-    async fn provide_oidc_config(&self, client: &Client) -> Result<OidcConfig, Box<dyn std::error::Error>> {
-        let oidc_config_uri = String::from(&self.authority_uri) + "/.well-known/openid-configuration";
+    async fn provide_oidc_config(
+        &self,
+        client: &Client,
+    ) -> Result<OidcConfig, Box<dyn std::error::Error>> {
+        let oidc_config_uri =
+            String::from(&self.authority_uri) + "/.well-known/openid-configuration";
 
-        let mut res = client.get(oidc_config_uri)
-            .send()
-            .await?;
-        let oidc_config =
-            res.json::<OidcConfig>()
-            .await?;
+        let mut res = client.get(oidc_config_uri).send().await?;
+        let oidc_config = res.json::<OidcConfig>().await?;
 
         Ok(oidc_config)
     }
@@ -79,20 +97,27 @@ impl OidcAuth {
     }
 
     pub async fn validate_token(&self, token: &str) -> Result<Claims, crate::Error> {
-        let validations = vec![Validation::NotExpired, Validation::Issuer(self.authority_uri.clone()), Validation::SubjectPresent];
+        let validations = vec![
+            Validation::NotExpired,
+            Validation::Issuer(self.authority_uri.clone()),
+            Validation::SubjectPresent,
+        ];
         let kid = match token_kid(&token) {
             Ok(res) => res.expect("failed to decode kid"),
             Err(_) => return Err(crate::Error::JWKSFetchError),
         };
-        let jwk = self.provide_jwk(&kid).await.expect("Specified key not found in set");
+        let jwk = self
+            .provide_jwk(&kid)
+            .await
+            .expect("Specified key not found in set");
         let res = validate(token, &jwk, validations);
-        
+
         match res {
             Ok(c) => Ok(Claims(c.claims)),
             Err(e) => {
                 eprintln!("token validation failed: {:?}; token was: {}", e, token);
                 Err(crate::Error::JWTValidationFailed)
-            },
+            }
         }
     }
 }
@@ -107,12 +132,17 @@ struct AuthServerTokenExchangePayload<'a> {
 }
 
 impl OidcAuth {
-    pub async fn exchange_code_for_token(&self, code: &str, redirect_uri: Option<&str>, state: Option<&str>) -> Result<TokenResponse,crate::Error> {
+    pub async fn exchange_code_for_token(
+        &self,
+        code: &str,
+        redirect_uri: Option<&str>,
+        state: Option<&str>,
+    ) -> Result<TokenResponse, crate::Error> {
         let client = Client::new();
-        
+
         let oidc_config = match self.provide_oidc_config(&client).await {
             Ok(c) => c,
-            Err(e) => return Err(crate::Error::TokenExchangeFailure(e.to_string()))
+            Err(e) => return Err(crate::Error::TokenExchangeFailure(e.to_string())),
         };
 
         let q = AuthServerTokenExchangePayload {
@@ -120,7 +150,7 @@ impl OidcAuth {
             client_id: &self.client_id,
             code,
             state,
-            redirect_uri
+            redirect_uri,
         };
         let mut post_req = client.post(&oidc_config.token_endpoint);
         if let Some(client_secret) = &self.client_secret {
@@ -130,24 +160,25 @@ impl OidcAuth {
 
         let mut response = match post_result {
             Err(e) => return Err(crate::Error::TokenExchangeFailure(e.to_string())),
-            Ok(r) => r
+            Ok(r) => r,
         };
 
         let resonse_status = response.status().as_u16();
         return match resonse_status {
-            200 => {
-                match response.json::<TokenResponse>().await {
-                    Ok(r) => Ok(r),
-                    Err(e) => return Err(crate::Error::TokenExchangeFailure(e.to_string()))
-                }
+            200 => match response.json::<TokenResponse>().await {
+                Ok(r) => Ok(r),
+                Err(e) => return Err(crate::Error::TokenExchangeFailure(e.to_string())),
+            },
+            400 => match response.json::<ErrorResponse>().await {
+                Ok(r) => Err(crate::Error::TokenExchangeResponseError(r)),
+                Err(e) => return Err(crate::Error::TokenExchangeFailure(e.to_string())),
+            },
+            _ => {
+                return Err(crate::Error::TokenExchangeFailure(
+                    "invalid auth server token endpoint response status code ".to_owned()
+                        + &resonse_status.to_string(),
+                ))
             }
-            400 => {
-                match response.json::<ErrorResponse>().await {
-                    Ok(r) => Err(crate::Error::TokenExchangeResponseError(r)),
-                    Err(e) => return Err(crate::Error::TokenExchangeFailure(e.to_string()))
-                }
-            }
-            _ => return Err(crate::Error::TokenExchangeFailure("invalid auth server token endpoint response status code ".to_owned() + &resonse_status.to_string()))
         };
     }
 }
