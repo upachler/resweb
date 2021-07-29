@@ -23,6 +23,18 @@ pub struct Site {
     name: String,
     description: Option<String>,
     url: String,
-    claim_set: Vec<String>,
+    pub claim_rules: Vec<ClaimRule>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ClaimRule {
+    pub path: String,
+    pub operator: Operator,
+    pub value: serde_json::Value
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum Operator {
+    Equals,
+    Contains
+}

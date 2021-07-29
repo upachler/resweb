@@ -1,4 +1,4 @@
-use std::{error::Error, fs::{File, canonicalize}, net::IpAddr, path::{PathBuf}, str::FromStr};
+use std::{error::Error, fs::File, net::IpAddr, path::{PathBuf}, str::FromStr};
 use serde::Deserialize;
 
 use clap::{App, AppSettings, Arg, ArgMatches, SubCommand};
@@ -21,6 +21,7 @@ struct ServeConfigContent {
     interface_addresses: Option<Vec<String>>,
     authorization_server_url: String,
     client_id: String,
+    scope: Option<String>,
     site_list: crate::site::SiteList,
     #[serde(default)]
     development: bool,
@@ -62,6 +63,7 @@ impl ServeConfigContent {
             common: CommonConfig::default(),
             port: self.port,
             interface_addresses,
+            scope: self.scope.clone().unwrap_or("openid".into()),
             authorization_server_url,
             site_list: self.site_list.clone(),
             client_id: self.client_id.clone(),
@@ -77,6 +79,7 @@ impl Default for ServeConfigContent {
             interface_addresses: None,
             authorization_server_url: "".into(),
             client_id: "".into(),
+            scope: None,
             site_list: crate::site::SiteList::new(), 
             development: false,
         }

@@ -21,7 +21,10 @@
             },
             "args": ["serve", "resweb.yaml", "-d"],
             //"args": ["init-templates"],
-            "cwd": "${workspaceFolder}"
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "RUST_BACKTRACE":"1"
+            }
         },
         {
             "type": "lldb",
