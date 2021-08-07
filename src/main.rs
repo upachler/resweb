@@ -19,7 +19,6 @@ use site::{Operator, Site};
 
 use std::fs::{DirBuilder, OpenOptions};
 use std::io::Write;
-use std::path::Path;
 use std::{fmt, path::PathBuf, sync::Arc};
 
 
