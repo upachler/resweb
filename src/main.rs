@@ -53,8 +53,18 @@ pub enum AppConfig {
     InitTemplates(InitTemplatesConfig)
 }
 
+impl AppConfig {
+    pub fn common(&self) -> &CommonConfig {
+        match self {
+            Self::Serve(s) => &s.common,
+            Self::InitTemplates(i) => &i.common
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CommonConfig {
+    logging: Option<String>,
     template_dir: Option<PathBuf>,
 }
 
@@ -65,6 +75,7 @@ impl CommonConfig {
 impl Default for CommonConfig {
     fn default() -> Self {
         CommonConfig {
+            logging: None,
             template_dir: None
         }
     }
@@ -275,17 +286,49 @@ impl cookie_auth::CookieAuthHandler for ResWebCookieAuthHandler {
 
 
 fn main() {
-    
-    let cfg = match cli::read_config() {
+
+    // NOTE: we read the config before we initialize logging, because
+    // logging config may be in AppConfig - and we cannot reconfigure
+    // the logger once it has been initialized...
+    let cfg_result = cli::read_config();
+
+    let effective_filters = if let Ok(env_filters) = std::env::var("RUST_LOG") {
+            env_filters
+        } else {
+            let mut filters = "info".into();
+            if let Ok(ref cfg) = cfg_result {
+                if let Some(configured_filters) = cfg.common().logging.clone() {
+                    filters = configured_filters
+                } else if let AppConfig::Serve(serve_config) = cfg {
+                    if serve_config.dev_mode_enabled {
+                        filters = "debug".into()
+                    }
+                }
+            };
+            filters
+        };
+           
+    pretty_env_logger::formatted_timed_builder()
+    .parse_filters(&effective_filters)
+    .init();
+
+    let cfg = match cfg_result {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("could not read config file {}", e);
+            log::error!("could not establish configuration, because: {}", e);
             std::process::exit(1)
         }
     };
 
+    log::info!("{} version {}", cli::CARGO_PKG_NAME, cli::CARGO_PKG_VERSION);
+    if let Some(tdir) = &cfg.common().template_dir {
+        log::info!("configured template directory is {}", tdir.to_string_lossy());
+    }
+
     match cfg {
         AppConfig::Serve(cfg) => {
+            log::info!("Configured to listen on port {} on interfaces {:#?}", cfg.port, cfg.interface_addresses);
+        
             tokio::runtime::Builder::new()
             .enable_all()
             .build()
@@ -295,8 +338,8 @@ fn main() {
         }
         AppConfig::InitTemplates(cfg) => {
             match init_templates(&cfg) {
-                Ok(_) => println!("templates written to directory '{}'", cfg.common.template_dir.unwrap().to_string_lossy()),
-                Err(e) => eprintln!("could not write templates ({})", e)
+                Ok(_) => log::info!("templates written to directory '{}'", cfg.common.template_dir.unwrap().to_string_lossy()),
+                Err(e) => log::error!("could not write templates ({})", e)
             }
         }
     }
@@ -314,7 +357,7 @@ async fn async_main(serve_config: ServeConfig) -> std::io::Result<()> {
     let auth = Arc::new(OidcAuth::new(serve_config.authorization_server_url.to_string(), &serve_config.client_id, None));
     let oidc_config = match auth.get_oidc_config().await {
         Err(_e) => {
-            eprintln!("cannot load oidc config from IDP at {}", serve_config.authorization_server_url.to_string());
+            log::warn!("cannot load oidc config from IDP at {}", serve_config.authorization_server_url.to_string());
             return Ok(())
         },
         Ok(c) => c
@@ -403,7 +446,7 @@ fn init_templates(cfg: &InitTemplatesConfig) -> Result<(),Box<dyn std::error::Er
         let mut file = match OpenOptions::new().write(true).create_new(true).open(&file_path) {
             Ok(f) => f,
             Err(e) => {
-                eprintln!("error writing to '{}'", file_path.to_string_lossy());
+                log::error!("error writing to '{}'", file_path.to_string_lossy());
                 return Err(Box::new(e))
             }
         };
@@ -412,9 +455,9 @@ fn init_templates(cfg: &InitTemplatesConfig) -> Result<(),Box<dyn std::error::Er
         }
     };
     
-    println!("Created default templates for customization at path '{}'", path.to_string_lossy());
-    println!("To start customizing, let {} serve in development mode. To find out how, consult the help, like this:\n", cli::CARGO_PKG_NAME);
-    println!("\t{} help {}\n", cli::CARGO_PKG_NAME, cli::SERVE_SCMD_NAME);
+    log::info!("Created default templates for customization at path '{}'", path.to_string_lossy());
+    log::info!("To start customizing, let {} serve in development mode. To find out how, consult the help, like this:\n", cli::CARGO_PKG_NAME);
+    log::info!("\t{} help {}\n", cli::CARGO_PKG_NAME, cli::SERVE_SCMD_NAME);
 
     Ok(())
 }
