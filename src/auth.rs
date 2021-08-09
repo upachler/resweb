@@ -89,7 +89,7 @@ impl OidcAuth {
         let client = Client::default();
         let oidc_config = self.provide_oidc_config(&client).await?;
         let jwks = fetch_jwks(&client, &oidc_config.jwks_uri).await?;
-        println!("jwks: {:?}", jwks);
+        log::debug!("fetched server public JSON web keys: {:?}", jwks);
 
         jwks.find(kid)
             .map(|jwk| jwk.clone())
@@ -115,7 +115,7 @@ impl OidcAuth {
         match res {
             Ok(c) => Ok(Claims(c.claims)),
             Err(e) => {
-                eprintln!("token validation failed: {:?}; token was: {}", e, token);
+                log::debug!("token validation failed: {:?}; token was: {}", e, token);
                 Err(crate::Error::JWTValidationFailed)
             }
         }

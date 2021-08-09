@@ -2,7 +2,14 @@ use std::{error::Error, fmt::Display};
 
 #[derive(Debug)]
 pub struct StringError {
-    msg: String
+    msg: String,
+    source: Option<Box<dyn Error>>,
+}
+
+impl StringError {
+    pub fn from_source(source: Box<dyn Error>, msg: &str) -> Self {
+        Self { source: Some(source), msg: msg.into() }
+    }
 }
 
 impl Display for StringError {
@@ -11,16 +18,19 @@ impl Display for StringError {
     }
 }
 impl Error for StringError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        self.source.as_deref()
+    }
 }
 impl From<String> for StringError 
 {
     fn from(msg: String) -> Self {
-        StringError {msg}
+        StringError {msg, source: None}
     }
 }
 impl From<&str> for StringError {
     fn from(msg: &str) -> Self {
-        StringError {msg: msg.into()}
+        StringError {msg: msg.into(), source: None}
     }
 }
 

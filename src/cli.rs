@@ -123,8 +123,8 @@ pub fn read_config() -> Result<crate::AppConfig, Box<dyn Error>> {
         let config_file = match File::open(config_file_path) {
             Ok(f) => f,
             Err(e) => {
-                eprintln!("cannot open configuration file {}: {}", config_file_path, e.to_string());
-                return Err(Box::new(e))
+                let msg = format!("cannot open configuration file {}: {}", config_file_path, e.to_string());
+                return Err(Box::new(StringError::from_source(Box::new(e), &msg)))
             }
         };
 
@@ -132,23 +132,21 @@ pub fn read_config() -> Result<crate::AppConfig, Box<dyn Error>> {
             serde_yaml::from_reader(config_file)
         } else {
             let msg = std::fmt::format(format_args!("config file name {} must end in .yml or .yaml", config_file_path));
-            eprintln!("{}", msg);
             return Err(Box::new(StringError::from(msg)));
         };
         
         let cfg_content = match r {
             Ok(cfg) => cfg,
             Err(e) => {
-                eprintln!("error parsing configuration file {}: {}", config_file_path, e.to_string());
-                return Err(Box::new(e))
+                let msg = format!("error parsing configuration file {}: {}", config_file_path, e.to_string());
+                return Err(Box::new(StringError::from_source(Box::new(e), &msg)))
             }
         };
 
         let mut cfg = match cfg_content.into_config() {
             Ok(v) => v,
             Err(msg) => {
-                eprintln!("configuration validation failed:");
-                eprintln!("{}", msg.to_string());
+                let msg = format!("configuration validation failed ({})", msg.to_string());
                 return Err(Box::new(StringError::from(msg)))
             }
         };
@@ -177,7 +175,7 @@ fn init_common_config(m: &ArgMatches, common: &mut CommonConfig, require_templat
         match PathBuf::from(v).canonicalize() {
             Ok(p) => {
                 if require_templatedir_exists && !p.exists(){
-                    let msg = std::fmt::format(format_args!("specified path '{}' does not exist", p.to_string_lossy()));
+                    let msg = format!("specified path '{}' does not exist", p.to_string_lossy());
                     Err(Box::new(StringError::from(msg)))
                 } else {
                     common.template_dir = Some(p);
