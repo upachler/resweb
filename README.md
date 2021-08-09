@@ -94,20 +94,40 @@ site_list:
     url: https://wiki.inraweb.local/
     claim_rules:
     - path: 'realm_access.roles'
-      operator: Contains
-      value: wiki_user
+      operator: ContainsMatch
+      operand:
+        value: wiki_user
     - path: 'realm_access.roles'
-      operator: Contains
-      value: wiki_admin
+      operator: ContainsMatch
+      operand:
+        value: wiki_admin
 ...
 ```
 
 From the example you see that each site consists of a `name`, a `url` and a list of `claim_rules`. The `name` is displayed in the dashboard if any of the `claim_rules` match. 
-Each rule itself consists of a `path` (JSON path, also called claim name), the comparson `operator` and the `value` to compare the contents of the path with. `operator` can currently be `Equals` (for paths that have contain a single value) or `Contains` (for paths holding an array of values, like the `realm_access.roles` path in our example). As you can see, we put the role names in to the `value` of each of the rules, so if a use has any of these roles assigned, the site will be displayed.
+Each rule itself consists of a `path` (JSON path, also called claim name), the comparson `operator` and the `value` to compare the contents of the path with. `operator` can currently be `Matches` (for paths that hold a single value) or `ContainsMatch` (for paths holding an array of values, like the `realm_access.roles` path in our example). As you can see, we put the role names in to the `value` of each of the rules, so if a use has any of these roles assigned, the site will be displayed.
+
+As you see, enumerating all possible roles as separate rules is quite cumbersome. For cases like the one above, where all roles start with the same substring `wiki_`, we can also use regular expressions (regex) to make things shorter - however, the resulting rule will then match all role names starting with `wiki_`:
+```yaml
+...
+site_list:
+  sites:
+  - name: Wiki
+    url: https://wiki.inraweb.local/
+    claim_rules:
+    - path: 'realm_access.roles'
+      operator: ContainsMatch
+      operand:
+        # matches all roles that start with 'wiki_'
+        regex: wiki_.*
+...
+```
+
+The `regex` operand uses perl-like regular expressions. As resweb uses the `regex` crate, it adheres to it's [syntax described here](https://docs.rs/regex/1.5/regex/#syntax).
 
 The example above assumes that you have a site like this running, which you might not have locally. To provide an example running out-of the box, assume we make Google and Disney part of our intraweb. Users who can access Disney will need the `disney` role, while the ones allowed to do Google searches require the `google` role.
 
-```
+```yaml
 port: 8081
 authorization_server_url: http://localhost:8080/auth/realms/test
 client_id: resweb
@@ -118,14 +138,16 @@ site_list:
     url: https://www.disney.com/
     claim_rules:
     - path: 'realm_access.roles'
-      operator: Contains
-      value: disney
+      operator: ContainsMatch
+      operand:
+        value: disney
   - name: Google
     url: https://www.google.com/
     claim_rules:
     - path: 'realm_access.roles'
-      operator: Contains
-      value: google
+      operator: ContainsMatch
+      operand:
+        value: google
 ```
 
 ## Customization ##

@@ -15,7 +15,7 @@ use actix_web_httpauth::extractors::bearer::{BearerAuth, Config};
 use actix_web_httpauth::extractors::AuthenticationError;
 use actix_web_httpauth::middleware::HttpAuthentication;
 use auth::{Claims, OidcAuth};
-use site::{Operator, Site};
+use site::{Operator, Operand, Site};
 
 use std::fs::{DirBuilder, OpenOptions};
 use std::io::Write;
@@ -121,6 +121,17 @@ async fn hello() -> impl Responder {
     HttpResponse::Found().header("location", "/web/dashboard").finish()
 }
 
+fn matches_operand(v: &serde_json::Value, op: &Operand) -> bool {
+    match op {
+        Operand::Value {value} => v.eq(value),
+        Operand::Regex {regex} => if let Some(s)=v.as_str() {
+                regex.is_match(s)
+            } else {
+                false
+            }
+    }
+}
+
 fn is_site_for_claims(site: &Site, claims: &Claims) -> bool {
     
     for r in &site.claim_rules {
@@ -131,10 +142,11 @@ fn is_site_for_claims(site: &Site, claims: &Claims) -> bool {
             continue
         };
 
+
         let rule_matches = match r.operator.clone() {
-            Operator::Equals => v.eq(&r.value),
-            Operator::Contains => if let Some(a) = v.as_array() {
-                    a.contains(&r.value)
+            Operator::Matches => matches_operand(v, &r.operand),
+            Operator::ContainsMatch => if let Some(a) = v.as_array() {
+                    a.iter().find(|v| matches_operand(v, &r.operand)).is_some()
                 } else {
                     false
                 }
