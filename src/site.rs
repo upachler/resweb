@@ -30,11 +30,21 @@ pub struct Site {
 pub struct ClaimRule {
     pub path: String,
     pub operator: Operator,
-    pub value: serde_json::Value
+    pub operand: Operand,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(untagged)]
+pub enum Operand {
+    Value{ value: serde_json::Value },
+    Regex{ 
+        #[serde(with = "serde_regex")]
+        regex: regex::Regex 
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Operator {
-    Equals,
-    Contains
+    Matches,
+    ContainsMatch
 }
