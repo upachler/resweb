@@ -1,4 +1,4 @@
- # resweb #
+ # resweb ![build:status](https://travis-ci.com/upachler/resweb.svg?branch=master&amp;status=passed) 
  
  A central dashboard designed to dynamically link to other web apps in an intraweb.
  
@@ -74,7 +74,7 @@ When doing so, we're immediately redirected to the IDP's login screen. If you lo
 
 However, because we didn't configure any sites yet, none are displayed, because the `sites` array in our config file is empty:
 
-```
+```yaml
 ...
 site_list:
   sites: []
