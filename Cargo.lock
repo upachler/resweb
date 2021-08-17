@@ -434,8 +434,9 @@ dependencies = [
 
 [[package]]
 name = "alcoholic_jwt"
-version = "1.0.0"
-source = "git+https://github.com/lelongg/alcoholic_jwt.git#17060cece3b41052eefd0711931c70f42b29eb8d"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ae352bd3993809514af3f49647a1b3c36bf98c8b80afece286b62e8304f7579"
 dependencies = [
  "base64 0.10.1",
  "openssl",
