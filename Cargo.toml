@@ -21,12 +21,6 @@ serde_regex = "1.1"
 regex = "1.5"
 log = "0.4"
 pretty_env_logger = "0.4"
-
-# alcoholic_jwt is taken from a PR, because the maintainer hasn't merged that (yet?)
-# actually, the maintainer moved the code somewhere else, where it is rather difficult
-# to get from. The hope is that they change their mind at some point...
-# (otherwise well have to switch JWT libaries again...)
-#alcoholic_jwt = {git="https://github.com/lelongg/alcoholic_jwt.git"}
 alcoholic_jwt = "1.0"
 juniper = "0.15"
 juniper_actix = "0.2"
