@@ -1,13 +1,131 @@
-<html>
-    <head>
-        <title>Dashboard</title>
-    </head>
-    <body>
-        <p>hello  World</p>
-        <ul>
-            {{#each this}}
-            <li><a href="{{this.url}}"><span>{{this.name}}</span></a></li>
-            {{/each}}
-        </ul>
-    </body>
+<!-- Built with love and https://purecss.io/ -->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Dashboard</title>
+    <base href="/" />
+
+    <!-- Meta -->
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <!-- Favicon -->
+    <link
+      rel="icon"
+      type="image/x-icon"
+      href="https://www.almato.com/wp-content/themes/almato/static/img/icons/favicon-16x16.png"
+    />
+
+    <!-- Pure.css -->
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/purecss@2.0.6/build/pure-min.css"
+      integrity="sha384-Uu6IeWbM+gzNVXJcM9XV3SohHtmWE+3VGi496jvgX1jyvDTXfdK+rfZc8C1Aehk5"
+      crossorigin="anonymous"
+    />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/purecss@2.0.6/build/grids-responsive-min.css"
+    />
+
+    <style>
+      html,
+      body {
+        height: 100%;
+        font-family: Arial, Helvetica, "Lucida Grande", Geneva, Tahoma, Verdana,
+          sans-serif;
+        color: midnightblue;
+      }
+
+      body {
+        margin: 1rem;
+        background: url("https://cdn.pixabay.com/photo/2015/05/15/14/52/water-768745_960_720.jpg")
+          no-repeat center center fixed;
+        background-size: cover;
+      }
+
+      @media (min-width: 481px) {
+        .dashboard-container {
+          margin-top: 2.45rem;
+        }
+      }
+
+      .dashboard-item-link {
+        list-style-type: none;
+        margin-bottom: 2rem;
+        display: flex;
+        align-items: center;
+      }
+
+      .dashboard-item-link__icon {
+        width: 2rem;
+        height: 2rem;
+        margin-right: 1rem;
+      }
+
+      .dashboard-item-link {
+        text-decoration: none;
+        color: midnightblue;
+      }
+      .dashboard-item:hover {
+        text-decoration: underline;
+      }
+    </style>
+  </head>
+
+  <body>
+    <h1>Dashboard</h1>
+    <p>Welcome back, |username|!</p>
+
+    <form class="pure-form">
+      <input
+        id="dashboard-search"
+        type="text"
+        class="pure-input-1"
+        placeholder="Looking for something specific?"
+        autofocus
+      />
+      <br />
+    </form>
+
+    <div class="dashboard-container">
+      <ul class="pure-g">
+        {{#each this}}
+        <li
+          id="{{this.name}}"
+          class="dashboard-item pure-u-1 pure-u-md-1-2 pure-u-lg-1-4"
+        >
+          <a class="dashboard-item-link" href="{{this.url}}">
+            <img
+              class="dashboard-item-link__icon"
+              src="{{this.url}}/favicon.ico"
+              onerror="this.src='https://static.thenounproject.com/png/916729-200.png'"
+            />
+            <span class="dashboard-item-link__label">{{this.name}}</span></a
+          >
+        </li>
+        {{/each}}
+      </ul>
+    </div>
+  </body>
+
+  <script>
+    document
+      .getElementById("dashboard-search")
+      .addEventListener("keyup", (event) => {
+        const searchTextCaseInsensitive = event.target.value.toLowerCase();
+
+        const items = document.getElementsByClassName("dashboard-item");
+
+        const itemsArray = [].slice.call(items);
+
+        itemsArray.forEach((i) => {
+          const isItemVisible =
+            !searchTextCaseInsensitive.length ||
+            i.id.toLowerCase().includes(searchTextCaseInsensitive);
+
+          document.getElementById(i.id).hidden = !isItemVisible;
+        });
+      });
+  </script>
 </html>
