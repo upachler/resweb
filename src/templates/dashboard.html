@@ -38,7 +38,7 @@
 
   <body>
     <h1>Dashboard</h1>
-    <p>Welcome back, |username|!</p>
+    <p>Welcome back, {{access_token.name}}!</p>
 
     <form class="pure-form">
       <input
@@ -53,7 +53,7 @@
 
     <div class="dashboard-container">
       <ul class="pure-g">
-        {{#each this}}
+        {{#each sites}}
         <li
           id="{{this.name}}"
           class="dashboard-item pure-u-1 pure-u-md-1-2 pure-u-lg-1-4"
