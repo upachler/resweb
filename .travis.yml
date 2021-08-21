@@ -9,7 +9,9 @@ before_script:
     case $TRAVIS_OS_NAME in
       windows)
         git clone https://github.com/microsoft/vcpkg
-        ./vcpkg/bootstrap-vcpkg.bat
-        ./vcpkg/vcpkg.exe install openssl:x64-windows
+        cd vcpkg
+        ./bootstrap-vcpkg.bat
+        ./vcpkg integrate install
+        ./vcpkg install openssl:x64-windows
         export VCPKGRS_DYNAMIC=1
     esac
