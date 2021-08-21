@@ -41,7 +41,7 @@ resweb help
  Resweb has several subcommands (run `resweb help` and `resweb help <command>` for details). The most important is `serve`, which runs resweb in server mode. The `serve` subcommand requires a configuration file, which at least must contain
  * URL and clientId for the authorization server
  * port on which resweb should listen for incoming connections
- * an empty site list
+ * a site list (can be empty)
 
 A minimum configuration looks like this:
 ```yaml
