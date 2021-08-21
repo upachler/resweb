@@ -7,6 +7,8 @@ mod cli;
 mod templates;
 mod error;
 
+use serde::{Serialize};
+
 use actix_files::NamedFile;
 use actix_session::CookieSession;
 use actix_web::dev::ServiceRequest;
@@ -15,6 +17,7 @@ use actix_web_httpauth::extractors::bearer::{BearerAuth, Config};
 use actix_web_httpauth::extractors::AuthenticationError;
 use actix_web_httpauth::middleware::HttpAuthentication;
 use auth::{Claims, OidcAuth};
+use serde_json::Map;
 use site::{Operator, Operand, Site};
 
 use std::fs::{DirBuilder, OpenOptions};
@@ -172,18 +175,37 @@ fn is_site_for_claims(site: &Site, claims: &Claims) -> bool {
     false
 }
 
-#[get("/{template_name:.*}")]
-async fn handle_web(req: HttpRequest, wc: web::Data<WebContext<'_>>, web::Path(template_name): web::Path<String>) -> impl Responder {
-    if wc.hb.has_template(&template_name) {
+#[derive(Serialize)]
+struct HbsContext <'a> {
+    access_token: &'a serde_json::Value,
+    sites: Vec<&'a Site>,
+}
 
-        let sites = if let Some(claims) = req.extensions().get::<Claims>() {
+#[get("/{template_name:.*}")]
+async fn handle_web(req: HttpRequest, wc: web::Data<WebContext<'_>>, web::Path(template_name): web::Path<String>) -> impl Responder{
+    if wc.hb.has_template(&template_name) {
+        
+        let ext = req.extensions();
+        let claims_opt = ext.get::<Claims>();
+
+        let sites = if let Some(claims) = claims_opt {
             wc.app_config.site_list.sites()
             .iter().filter(|site|is_site_for_claims(site, claims))
             .collect()    
         } else {
             Vec::new()
         };
-        return match wc.hb.render(&template_name, &sites) {
+        let empty = serde_json::Value::Object(Map::new());
+        let ctx = HbsContext {
+            access_token: 
+                if let Some(claims) = claims_opt {
+                    claims.value()
+                } else {
+                    &empty
+                },
+            sites: sites
+        };
+        return match wc.hb.render(&template_name, &ctx) {
             Ok(body) => HttpResponse::Ok().body(body),
             Err(e) => HttpResponse::InternalServerError().body(e.desc)
         }

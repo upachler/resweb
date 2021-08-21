@@ -37,6 +37,10 @@ impl Claims {
 
         v_opt
     }
+
+    pub fn value(&self) -> &serde_json::Value {
+        &self.0
+    }
 }
 
 #[derive(Deserialize, Clone, Debug)]
