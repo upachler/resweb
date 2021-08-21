@@ -1,4 +1,4 @@
- # resweb ![build:status](https://travis-ci.com/upachler/resweb.svg?branch=master&amp;status=passed) 
+ # resweb [![build:status](https://travis-ci.com/upachler/resweb.svg?branch=master&amp;status=passed)](https://app.travis-ci.com/github/upachler/resweb)
  
  A central dashboard designed to dynamically link to other web apps in an intraweb.
  
