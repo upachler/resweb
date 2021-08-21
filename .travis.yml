@@ -3,3 +3,13 @@ os:
 - osx
 - linux
 - windows
+
+script:
+- |-
+    case $TRAVIS_OS_NAME in
+      windows)
+        git clone https://github.com/microsoft/vcpkg
+        ./vcpkg/bootstrap-vcpkg.bat
+        ./vcpkg/vcpkg.exe install openssl:x64-windows
+        export VCPKGRS_DYNAMIC=1
+    esac
