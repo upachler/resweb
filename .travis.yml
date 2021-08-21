@@ -4,7 +4,7 @@ os:
 - linux
 - windows
 
-script:
+before_script:
 - |-
     case $TRAVIS_OS_NAME in
       windows)
