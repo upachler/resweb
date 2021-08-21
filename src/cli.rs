@@ -172,26 +172,13 @@ pub fn read_config() -> Result<crate::AppConfig, Box<dyn Error>> {
 
 fn init_common_config(m: &ArgMatches, common: &mut CommonConfig, require_templatedir_exists: bool) -> Result<(), Box<dyn Error>> {
     if let Some(v) = m.value_of(TEMPLATE_DIR_ARG_NAME) {
-        match PathBuf::from(v).canonicalize() {
-            Ok(p) => {
-                if require_templatedir_exists && !p.exists(){
-                    let msg = format!("specified path '{}' does not exist", p.to_string_lossy());
-                    Err(Box::new(StringError::from(msg)))
-                } else {
-                    common.template_dir = Some(p);
-                    Ok(())
-                }
-            },
-            Err(e) => Err(Box::new(e))
-        }
-    } else {
-        match PathBuf::from(CommonConfig::DEFAULT_TEMPLATE_DIR)
-            .canonicalize() {
-            Ok(p) => {
-                common.template_dir = Some(p); 
-                Ok(())
-            },
-            Err(e) => Err(Box::new(e)),
+        let p = PathBuf::from(v);
+        if require_templatedir_exists && !p.exists(){
+            let msg = format!("specified template directory '{}' does not exist", p.to_string_lossy());
+            return Err(Box::new(StringError::from(msg)))
+        } else {
+            common.template_dir = Some(p);
         }
     }
+    Ok(())
 }

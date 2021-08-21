@@ -27,11 +27,12 @@ use juniper_actix::{graphiql_handler, graphql_handler, playground_handler};
 use web::Payload;
 
 
+
+
+
 use handlebars::Handlebars;
 
 use graphql_schema::{Context, Query, Schema};
-
-use crate::error::StringError;
 
 const CLIENT_ID: &str = "resweb";
 const GRAPHQL_PATH: &str = "/graphql";
@@ -322,7 +323,7 @@ fn main() {
 
     log::info!("{} version {}", cli::CARGO_PKG_NAME, cli::CARGO_PKG_VERSION);
     if let Some(tdir) = &cfg.common().template_dir {
-        log::info!("configured template directory is {}", tdir.to_string_lossy());
+        log::info!("configured template directory is '{}'", tdir.to_string_lossy());
     }
 
     match cfg {
@@ -338,7 +339,7 @@ fn main() {
         }
         AppConfig::InitTemplates(cfg) => {
             match init_templates(&cfg) {
-                Ok(_) => log::info!("templates written to directory '{}'", cfg.common.template_dir.unwrap().to_string_lossy()),
+                Ok(path) => log::info!("templates written to directory '{}'", path.to_string_lossy()),
                 Err(e) => log::error!("could not write templates ({})", e)
             }
         }
@@ -363,6 +364,18 @@ async fn async_main(serve_config: ServeConfig) -> std::io::Result<()> {
         Ok(c) => c
     };
 
+    let template_dir = {
+        let d = resolve_template_dir(&serve_config.common);
+        if d.exists() {
+            log::info!("Using template directory '{}'.", d.to_string_lossy());
+            log::info!("Files not found in the template directory will be served from the internal file store");
+            Some(d)
+        } else {
+            log::info!("Using internal template filestore");
+            None
+        }
+    };
+
     let mut actix_srv = HttpServer::new(move || {
         let mut hb = Handlebars::new();
         hb.set_dev_mode(serve_config.dev_mode_enabled);
@@ -380,8 +393,8 @@ async fn async_main(serve_config: ServeConfig) -> std::io::Result<()> {
                 Err(e) => panic!("could not parse internal template {}", e)
             }
         }
-        if let Some(template_dir) = &serve_config.common.template_dir {
-            hb.register_templates_directory(HTML_SUFFIX, template_dir).unwrap();
+        if let Some(d) = template_dir.clone() {
+            hb.register_templates_directory(HTML_SUFFIX, d).unwrap();
         }
         let web_context = web::Data::new(WebContext{hb, app_config: serve_config.clone()});
 
@@ -426,16 +439,20 @@ async fn async_main(serve_config: ServeConfig) -> std::io::Result<()> {
     actix_srv.run().await
 }
 
-fn init_templates(cfg: &InitTemplatesConfig) -> Result<(),Box<dyn std::error::Error>> {
-    let path = if let Some(d) = &cfg.common.template_dir {
-        d
+fn resolve_template_dir(cfg: &CommonConfig) -> PathBuf {
+    if let Some(p) = cfg.template_dir.clone() {
+        p
     } else {
-        return Err(Box::new(StringError::from("no template dir specified")))
-    };
+        PathBuf::from(CommonConfig::DEFAULT_TEMPLATE_DIR)
+    }
+}
+
+fn init_templates(cfg: &InitTemplatesConfig) -> Result<PathBuf,Box<dyn std::error::Error>> {
+    let path = resolve_template_dir(&cfg.common);
 
     match DirBuilder::new()
         .recursive(true)
-        .create(path) {
+        .create(&path) {
         Err(e) => return Err(Box::from(e)),
         Ok(_) => (),
     };
@@ -459,5 +476,5 @@ fn init_templates(cfg: &InitTemplatesConfig) -> Result<(),Box<dyn std::error::Er
     log::info!("To start customizing, let {} serve in development mode. To find out how, consult the help, like this:\n", cli::CARGO_PKG_NAME);
     log::info!("\t{} help {}\n", cli::CARGO_PKG_NAME, cli::SERVE_SCMD_NAME);
 
-    Ok(())
+    Ok(path)
 }
