@@ -17,6 +17,8 @@ before_script:
     esac
 jobs:
   include:
-  - services: docker
+  - language: minimal
+    os: linux
+    services: docker
     script: docker build .
 
