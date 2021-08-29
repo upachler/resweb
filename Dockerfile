@@ -1,4 +1,4 @@
-FROM ubuntu
+FROM ubuntu:18.04 as builder
 
 RUN apt-get update
 
@@ -15,9 +15,27 @@ RUN chmod +x rustup-init.sh
 RUN ./rustup-init.sh -y
 RUN echo '$HOME/.cargo/env' >> ~/.profile
 
-#RUN ls ~/.cargo/bin && echo $PATH && false
 WORKDIR /home/rust/resweb
 
-COPY . .
+# create build layer that only builds dependencies
+RUN ~/.cargo/bin/cargo init .
+COPY Cargo.* .
+RUN ~/.cargo/bin/cargo build --release
 
-RUN ~/.cargo/bin/cargo build
+COPY --chown=rust src src/
+RUN touch src/main.rs 
+
+RUN ~/.cargo/bin/cargo build --release
+
+
+# create runtime environment image
+FROM ubuntu:18.04
+
+RUN apt-get update
+RUN apt-get install -y openssl
+
+ENV TARGET_DIR=/usr/local/bin
+RUN mkdir -p $TARGET_DIR
+COPY --from=builder /home/rust/resweb/target/*/resweb $TARGET_DIR
+
+ENTRYPOINT ["/usr/local/bin/resweb"]
