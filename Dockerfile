@@ -16,6 +16,7 @@ RUN ./rustup-init.sh -y
 RUN echo '$HOME/.cargo/env' >> ~/.profile
 
 WORKDIR /home/rust/resweb
+RUN chmod u+x .
 
 # create build layer that only builds dependencies
 RUN ~/.cargo/bin/cargo init .
