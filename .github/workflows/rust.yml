@@ -16,6 +16,19 @@ jobs:
       matrix:
         os: [macos-latest, ubuntu-latest, windows-latest]
     steps:
+    - name: Preconditions
+      shell: bash
+      run:  |
+            case $RUNNER_OS in
+              Windows)
+                echo "setup openssl for windows using vcpkg..."
+                git clone https://github.com/microsoft/vcpkg
+                cd vcpkg
+                ./bootstrap-vcpkg.bat
+                ./vcpkg integrate install
+                ./vcpkg install openssl:x64-windows
+                export VCPKGRS_DYNAMIC=1
+            esac  
     - uses: actions/checkout@v2
     - name: Build
       run: cargo build --release --verbose
