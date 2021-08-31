@@ -22,12 +22,7 @@ jobs:
             case $RUNNER_OS in
               Windows)
                 echo "setup openssl for windows using vcpkg..."
-                git clone https://github.com/microsoft/vcpkg
-                cd vcpkg
-                ./bootstrap-vcpkg.bat
-                ./vcpkg integrate install
-                ./vcpkg install openssl:x64-windows
-                export VCPKGRS_DYNAMIC=1
+                choco install openssl
             esac  
     - uses: actions/checkout@v2
     - name: Build
