@@ -1,0 +1,20 @@
+name: Docker Image
+
+on:
+  push:
+    branches: [ feature/docker-image ]
+  pull_request:
+    branches: [ feature/docker-image ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Build the rust program in docker container
+      run: |
+        cd ${{ github.workspace }};
+        
+        docker build .
