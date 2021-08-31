@@ -1,0 +1,23 @@
+name: Rust
+
+on:
+  push:
+    branches: [ feature/docker-image ]
+  pull_request:
+    branches: [ feature/docker-image ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    steps:
+    - uses: actions/checkout@v2
+    - name: Build
+      run: cargo build --release
+    - name: Run tests
+      run: cargo test --release
