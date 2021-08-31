@@ -26,6 +26,7 @@ jobs:
             esac  
     - uses: actions/checkout@v2
     - name: Build
+      shell: bash
       run:  |
             case $RUNNER_OS in
               Windows)
