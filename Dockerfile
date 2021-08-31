@@ -21,7 +21,7 @@ WORKDIR /home/rust/resweb
 
 # create build layer that only builds dependencies
 RUN ~/.cargo/bin/cargo init .
-COPY Cargo.* .
+COPY Cargo.* ./
 RUN ~/.cargo/bin/cargo build --release
 
 COPY --chown=rust src src/
