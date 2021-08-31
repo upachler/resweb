@@ -26,4 +26,10 @@ jobs:
             esac  
     - uses: actions/checkout@v2
     - name: Build
-      run: cargo build --release --verbose
+      run:  |
+            case $RUNNER_OS in
+              Windows)
+              export OPENSSL_DIR='/c/Program Files/OpenSSL-Win64/'
+            esac
+            cargo build --release --verbose
+            C:\Program Files\OpenSSL-Win64\
