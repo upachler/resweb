@@ -15,8 +15,9 @@ RUN chmod +x rustup-init.sh
 RUN ./rustup-init.sh -y
 RUN echo '$HOME/.cargo/env' >> ~/.profile
 
-WORKDIR /home/rust/resweb
+RUN umask 002; mkdir /home/rust/resweb
 RUN chmod u+x .
+WORKDIR /home/rust/resweb
 
 # create build layer that only builds dependencies
 RUN ~/.cargo/bin/cargo init .
