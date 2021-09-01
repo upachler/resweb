@@ -33,4 +33,3 @@ jobs:
               export OPENSSL_DIR='/c/Program Files/OpenSSL-Win64/'
             esac
             cargo build --release --verbose
-            C:\Program Files\OpenSSL-Win64\
