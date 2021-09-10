@@ -37,7 +37,6 @@ use handlebars::Handlebars;
 
 use graphql_schema::{Context, Query, Schema};
 
-const CLIENT_ID: &str = "resweb";
 const GRAPHQL_PATH: &str = "/graphql";
 const EXCHANGE_TOKEN_PATH: &str = "/web/.exchange-token";
 const HTML_SUFFIX: &str = ".html";
@@ -283,9 +282,17 @@ async fn validator(
 
 #[derive(Clone)]
 struct ResWebCookieAuthHandler {
-    client_id: String,
     auth_uri: String,
     oidc_auth: Arc<OidcAuth>,
+}
+
+impl ResWebCookieAuthHandler {
+    fn new(oidc_auth: Arc<OidcAuth>, auth_uri: String) -> ResWebCookieAuthHandler {
+        ResWebCookieAuthHandler {
+            auth_uri,
+            oidc_auth
+        }
+    }
 }
 
 impl cookie_auth::CookieAuthHandler for ResWebCookieAuthHandler {
@@ -295,7 +302,7 @@ impl cookie_auth::CookieAuthHandler for ResWebCookieAuthHandler {
     }
 
     fn client_id(&self) -> &str {
-        &self.client_id
+        &self.oidc_auth.client_id()
     }
 
     fn token_exchange_path(&self) -> &str {
@@ -374,15 +381,11 @@ async fn launch_async(serve_config: ServeConfig) -> std::io::Result<()> {
     let actix_sys = actix_web::rt::System::run_in_tokio("server", &local_set);
 
     local_set.spawn_local(async {
-        async_main(serve_config).await;
-        log::info!("async_main exiting...")
+        async_main(serve_config).await
     });
     local_set.run_until( async move {
-        actix_sys.await;
-        log::info!("actix_sys exiting...")
-    }).await;
-    log::info!("launch_async exiting...");
-    Ok(())
+        actix_sys.await
+    }).await
 }
 
 async fn async_main(serve_config: ServeConfig) -> std::io::Result<()> {
@@ -437,11 +440,7 @@ async fn async_main(serve_config: ServeConfig) -> std::io::Result<()> {
         }
         let web_context = web::Data::new(WebContext{hb, app_config: serve_config.clone()});
 
-        let cookie_auth = cookie_auth::CookieAuth::new(ResWebCookieAuthHandler{
-            oidc_auth: auth.clone(),
-            client_id: CLIENT_ID.into(),
-            auth_uri: oidc_config.authorization_endpoint.clone(),
-        });
+        let cookie_auth = cookie_auth::CookieAuth::new(ResWebCookieAuthHandler::new(auth.clone(), oidc_config.authorization_endpoint.clone()));
         
         App::new()
             .service(hello)

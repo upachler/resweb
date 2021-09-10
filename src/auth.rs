@@ -17,6 +17,9 @@ impl OidcAuth {
             client_secret: client_secret.map(String::from),
         }
     }
+    pub fn client_id(&self) -> &str {
+        &self.client_id
+    }
 }
 
 pub struct Claims(serde_json::Value);
