@@ -2,9 +2,9 @@ name: Docker Image
 
 on:
   push:
-    branches: [ feature/docker-image ]
+    branches: [ master ]
   pull_request:
-    branches: [ feature/docker-image ]
+    branches: [ master ]
 
 jobs:
   build:
