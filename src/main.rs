@@ -357,7 +357,7 @@ fn main() {
             .basic_scheduler()
             .build()
             .unwrap()
-            .block_on(async_main(cfg))
+            .block_on(launch_async(cfg))
             .unwrap()
         }
         AppConfig::InitTemplates(cfg) => {
@@ -369,6 +369,23 @@ fn main() {
     }
 }
 
+async fn launch_async(serve_config: ServeConfig) -> std::io::Result<()> {
+    let local_set = tokio::task::LocalSet::new();
+    let actix_sys = actix_web::rt::System::run_in_tokio("server", &local_set);
+
+    local_set.spawn_local( async move {
+        actix_sys.await;
+        log::info!("actix_sys exiting...")
+    });
+    local_set.spawn_local(async {
+        async_main(serve_config).await;
+        log::info!("async_main exiting...")
+    });
+    local_set.await;
+    log::info!("launch_async exiting...");
+    Ok(())
+}
+
 async fn async_main(serve_config: ServeConfig) -> std::io::Result<()> {
     let addrs = serve_config.interface_addresses
     .iter()
@@ -376,8 +393,6 @@ async fn async_main(serve_config: ServeConfig) -> std::io::Result<()> {
     .map(|ip|ip.to_string() + ":" + &serve_config.port.to_string())
     .collect::<Vec<_>>();
     
-    let _actix_sys = actix_web::rt::System::run_in_tokio("server", &tokio::task::LocalSet::new());
-
     let auth = Arc::new(OidcAuth::new(serve_config.authorization_server_url.to_string(), &serve_config.client_id, None));
     let oidc_config = match auth.get_oidc_config().await {
         Err(e) => {
