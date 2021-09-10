@@ -1,6 +1,6 @@
 [package]
 name = "resweb"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Pachler, Uwe <uwe.pachler@datagroup.de>"]
 edition = "2018"
 
