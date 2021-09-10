@@ -379,8 +379,10 @@ async fn async_main(serve_config: ServeConfig) -> std::io::Result<()> {
 
     let auth = Arc::new(OidcAuth::new(serve_config.authorization_server_url.to_string(), &serve_config.client_id, None));
     let oidc_config = match auth.get_oidc_config().await {
-        Err(_e) => {
+        Err(e) => {
             log::error!("cannot load oidc config from IDP at {}", serve_config.authorization_server_url.to_string());
+            let msg = e.to_string();
+            log::error!("detail: {}", msg);
             return Ok(())
         },
         Ok(c) => c
