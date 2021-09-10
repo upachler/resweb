@@ -354,6 +354,7 @@ fn main() {
         
             tokio::runtime::Builder::new()
             .enable_all()
+            .basic_scheduler()
             .build()
             .unwrap()
             .block_on(async_main(cfg))

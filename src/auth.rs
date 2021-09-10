@@ -1,3 +1,4 @@
+use std::time::Duration;
 use actix_web::client::Client;
 use alcoholic_jwt::{token_kid, validate, Validation, JWK, JWKS};
 use serde::{Deserialize, Serialize};
@@ -73,7 +74,9 @@ async fn fetch_jwks(client: &Client, uri: &str) -> Result<JWKS, Box<dyn std::err
 
 impl OidcAuth {
     pub async fn get_oidc_config(&self) -> Result<OidcConfig, Box<dyn std::error::Error>> {
-        self.provide_oidc_config(&Client::default()).await
+        let t = Duration::from_secs(5);
+        let client = Client::builder().timeout(t).finish();
+        self.provide_oidc_config(&client).await
     }
 
     async fn provide_oidc_config(
