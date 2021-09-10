@@ -373,15 +373,14 @@ async fn launch_async(serve_config: ServeConfig) -> std::io::Result<()> {
     let local_set = tokio::task::LocalSet::new();
     let actix_sys = actix_web::rt::System::run_in_tokio("server", &local_set);
 
-    local_set.spawn_local( async move {
-        actix_sys.await;
-        log::info!("actix_sys exiting...")
-    });
     local_set.spawn_local(async {
         async_main(serve_config).await;
         log::info!("async_main exiting...")
     });
-    local_set.await;
+    local_set.run_until( async move {
+        actix_sys.await;
+        log::info!("actix_sys exiting...")
+    }).await;
     log::info!("launch_async exiting...");
     Ok(())
 }
