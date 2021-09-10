@@ -15,3 +15,10 @@ before_script:
         ./vcpkg install openssl:x64-windows
         export VCPKGRS_DYNAMIC=1
     esac
+jobs:
+  include:
+  - language: minimal
+    os: linux
+    services: docker
+    script: docker build .
+

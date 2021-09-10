@@ -1,0 +1,36 @@
+name: Rust
+
+on:
+  push:
+    branches: [ feature/docker-image ]
+  pull_request:
+    branches: [ feature/docker-image ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    steps:
+    - name: Preconditions
+      shell: bash
+      run:  |
+            case $RUNNER_OS in
+              Windows)
+                echo "setup openssl for windows using vcpkg..."
+                choco install openssl
+            esac  
+    - uses: actions/checkout@v2
+    - name: Build
+      shell: bash
+      run:  |
+            case $RUNNER_OS in
+              Windows)
+              export OPENSSL_DIR='/c/Program Files/OpenSSL-Win64/'
+            esac
+            cargo build --release --verbose
+            C:\Program Files\OpenSSL-Win64\
