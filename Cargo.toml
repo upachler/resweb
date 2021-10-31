@@ -9,9 +9,12 @@ edition = "2018"
 [dependencies]
 clap = "2.33.3"
 tokio = {version="0.2.25", features=["full"]}
+futures-util = "0.3.17"
 actix-web = {version="3.3.2", features=["rustls"]}
+#actix-web = {path="../projects.rs/actix-web", features=["rustls"]}
 actix-web-httpauth = "0.5.0"
 actix-session = "0.4.1"
+actix-service = "2.0.0"
 actix-files = "0.5.0"
 get_if_addrs = "0.5.3"
 serde = "1.0.124"

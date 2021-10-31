@@ -13,25 +13,43 @@ pub const CARGO_PKG_NAME: &'static str = env!("CARGO_PKG_NAME");
 pub const SERVE_SCMD_NAME: &str = "serve";
 pub const INIT_TEMPLATES_SCMD_NAME: &str = "init-templates";
 pub const DEVELOPMENT_ARG_NAME: &str = "development";
+pub const NO_AUTH_ARG_NAME: &str = "no-auth";
 pub const TEMPLATE_DIR_ARG_NAME: &str = "template-dir";
 
 #[derive(Deserialize, Debug)]
 struct ServeConfigContent {
     port: u16,
     interface_addresses: Option<Vec<String>>,
-    authorization_server_url: String,
-    client_id: String,
+    authorization_server_url: Option<String>,
+    client_id: Option<String>,
     scope: Option<String>,
     site_list: crate::site::SiteList,
     #[serde(default)]
     development: bool,
+    #[serde(default)]
+    disable_auth: bool,
 }
 
 impl ServeConfigContent {
-    fn into_config(&self) -> Result<crate::ServeConfig,String> {
-        let authorization_server_url = match url::Url::parse(&self.authorization_server_url) {
-            Ok(u) => u,
-            Err(e) => return Err(e.to_string())
+    fn into_config(&self, force_disable_auth: bool) -> Result<crate::ServeConfig,String> {
+
+        let auth = if self.disable_auth || force_disable_auth {
+            None
+        } else {
+
+            if self.authorization_server_url.is_none() || self.client_id.is_none() {
+                return Err("'authorization_server_url' must be configured if 'disable_auth' is not set to 'true'".into());
+            }
+            
+            let authorization_server_url = match url::Url::parse(self.authorization_server_url.as_ref().unwrap()) {
+                Ok(u) => u,
+                Err(e) => return Err(e.to_string())
+            };
+    
+            Some(crate::ServeAuthConfig{
+                authorization_server_url,
+                client_id: self.client_id.as_ref().unwrap().clone()
+            })
         };
 
         // parse interface addresses - if none are given, attempt to determine
@@ -64,9 +82,8 @@ impl ServeConfigContent {
             port: self.port,
             interface_addresses,
             scope: self.scope.clone().unwrap_or("openid".into()),
-            authorization_server_url,
+            auth,
             site_list: self.site_list.clone(),
-            client_id: self.client_id.clone(),
             dev_mode_enabled: self.development,
         })
     }
@@ -77,11 +94,12 @@ impl Default for ServeConfigContent {
         ServeConfigContent {
             port: 8081,
             interface_addresses: None,
-            authorization_server_url: "".into(),
-            client_id: "".into(),
+            authorization_server_url: Some("".into()),
+            client_id: Some("".into()),
             scope: None,
             site_list: crate::site::SiteList::new(), 
             development: false,
+            disable_auth: false,
         }
     }
 }
@@ -109,6 +127,10 @@ pub fn read_config() -> Result<crate::AppConfig, Box<dyn Error>> {
             .short("d")
             .long(DEVELOPMENT_ARG_NAME)
             .help("if specified, enables auto-reloading of handlebars templates from the template directory ")
+        )
+        .arg(Arg::with_name(NO_AUTH_ARG_NAME)
+            .long(NO_AUTH_ARG_NAME)
+            .help("if specified, disables authentication, and will show all elements in site list, regardless of rules")
         )
     )
     .subcommand(SubCommand::with_name(INIT_TEMPLATES_SCMD_NAME)
@@ -143,7 +165,8 @@ pub fn read_config() -> Result<crate::AppConfig, Box<dyn Error>> {
             }
         };
 
-        let mut cfg = match cfg_content.into_config() {
+        let no_auth = m.is_present(NO_AUTH_ARG_NAME);
+        let mut cfg = match cfg_content.into_config(no_auth) {
             Ok(v) => v,
             Err(msg) => {
                 let msg = format!("configuration validation failed ({})", msg.to_string());

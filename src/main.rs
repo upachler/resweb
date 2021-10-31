@@ -6,7 +6,9 @@ mod site;
 mod cli;
 mod templates;
 mod error;
+mod option_condition;
 
+use actix_web::middleware::Condition;
 use serde::{Serialize};
 
 use actix_files::NamedFile;
@@ -19,6 +21,7 @@ use actix_web_httpauth::middleware::HttpAuthentication;
 use auth::{Claims, OidcAuth};
 use serde_json::Map;
 use site::{Operator, Operand, Site};
+use option_condition::OptionCondition;
 
 use std::fs::{DirBuilder, OpenOptions};
 use std::io::Write;
@@ -85,12 +88,16 @@ impl Default for CommonConfig {
 }
 
 #[derive(Debug, Clone)]
+pub struct ServeAuthConfig {
+    authorization_server_url: url::Url,
+    client_id: String,
+}
+#[derive(Debug, Clone)]
 pub struct ServeConfig {
     common: CommonConfig,
     port: u16,
     interface_addresses: Vec<std::net::IpAddr>,
-    authorization_server_url: url::Url,
-    client_id: String,
+    auth: Option<ServeAuthConfig>,
     scope: String,
     site_list: site::SiteList,
     dev_mode_enabled: bool,
@@ -188,10 +195,16 @@ async fn handle_web(req: HttpRequest, wc: web::Data<WebContext<'_>>, web::Path(t
         let claims_opt = ext.get::<Claims>();
 
         let sites = if let Some(claims) = claims_opt {
+            // with claims, we check against them
             wc.app_config.site_list.sites()
             .iter().filter(|site|is_site_for_claims(site, claims))
             .collect()    
+        } else if wc.app_config.auth.is_none() {
+            // no claims, but auth disabled means we do not check for matching
+            // rules, but simply deliver all elements (intended for testing)
+            wc.app_config.site_list.sites().iter().collect()
         } else {
+            // no claims, auth enabled -> no elements visible
             Vec::new()
         };
         let empty = serde_json::Value::Object(Map::new());
@@ -395,15 +408,20 @@ async fn async_main(serve_config: ServeConfig) -> std::io::Result<()> {
     .map(|ip|ip.to_string() + ":" + &serve_config.port.to_string())
     .collect::<Vec<_>>();
     
-    let auth = Arc::new(OidcAuth::new(serve_config.authorization_server_url.to_string(), &serve_config.client_id, None));
-    let oidc_config = match auth.get_oidc_config().await {
-        Err(e) => {
-            log::error!("cannot load oidc config from IDP at {}", serve_config.authorization_server_url.to_string());
-            let msg = e.to_string();
-            log::error!("detail: {}", msg);
-            return Ok(())
+    let oidc = match &serve_config.auth {
+        Some(auth_config) => {
+            let auth = Arc::new(OidcAuth::new(auth_config.authorization_server_url.to_string(), &auth_config.client_id, None));
+            match auth.get_oidc_config().await {
+                Err(e) => {
+                    log::error!("cannot load oidc config from IDP at {}", auth_config.authorization_server_url.to_string());
+                    let msg = e.to_string();
+                    log::error!("detail: {}", msg);
+                    return Ok(())
+                },
+                Ok(oidc_config) => Some((oidc_config, auth))
+            }
         },
-        Ok(c) => c
+        None => None
     };
 
     let template_dir = {
@@ -440,18 +458,25 @@ async fn async_main(serve_config: ServeConfig) -> std::io::Result<()> {
         }
         let web_context = web::Data::new(WebContext{hb, app_config: serve_config.clone()});
 
-        let cookie_auth = cookie_auth::CookieAuth::new(ResWebCookieAuthHandler::new(auth.clone(), oidc_config.authorization_endpoint.clone()));
+        let cookie_auth = if let Some((oidc_config, auth)) = &oidc {
+            let h = ResWebCookieAuthHandler::new(auth.clone(), oidc_config.authorization_endpoint.clone());
+            Some(cookie_auth::CookieAuth::new(h))
+        } else {
+            None
+        };
         
         App::new()
             .service(hello)
             .service(
                 web::scope("web")
                 .app_data(web_context)
-                .wrap(cookie_auth)
-                .wrap(
+                .wrap(OptionCondition::new(
+                    cookie_auth
+                ))
+                .wrap(Condition::new(oidc.is_some(),
                     CookieSession::private(&[0; 32]) // <- create cookie based session middleware
                     .secure(false)
-                )
+                ))
                 .service(handle_web)
             )
             .service(
@@ -461,7 +486,6 @@ async fn async_main(serve_config: ServeConfig) -> std::io::Result<()> {
                     EmptyMutation::<Context>::new(),
                     EmptySubscription::<Context>::new(),
                 ))
-                .data(auth.clone())
                 .wrap(HttpAuthentication::bearer(validator))
                 .service(handle_graphql_get)
                 .service(handle_graphql_post)
