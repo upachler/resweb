@@ -38,7 +38,7 @@ impl ServeConfigContent {
         } else {
 
             if self.authorization_server_url.is_none() || self.client_id.is_none() {
-                return Err("'authorization_server_url' must be configured if 'disable_auth' is not set to 'true'".into());
+                return Err("'authorization_server_url' and 'client_id' must be configured if 'disable_auth' is not set to 'true'".into());
             }
             
             let authorization_server_url = match url::Url::parse(self.authorization_server_url.as_ref().unwrap()) {
