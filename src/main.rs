@@ -42,7 +42,7 @@ use graphql_schema::{Context, Query, Schema};
 
 const GRAPHQL_PATH: &str = "/graphql";
 const EXCHANGE_TOKEN_PATH: &str = "/web/.exchange-token";
-const HTML_SUFFIX: &str = ".html";
+const HBS_SUFFIX: &str = ".hbs";
 
 #[derive(fmt::Debug)]
 pub enum Error {
@@ -139,7 +139,7 @@ impl fmt::Display for Error {
 
 #[get("/")]
 async fn hello() -> impl Responder {
-    HttpResponse::Found().header("location", "/web/dashboard").finish()
+    HttpResponse::Found().header("location", "/web/index.html").finish()
 }
 
 fn matches_operand(v: &serde_json::Value, op: &Operand) -> bool {
@@ -189,61 +189,83 @@ struct HbsContext <'a> {
 
 #[get("/{template_name:.*}")]
 async fn handle_web(req: HttpRequest, wc: web::Data<WebContext<'_>>, web::Path(template_name): web::Path<String>) -> impl Responder{
-    if wc.hb.has_template(&template_name) {
-        
-        let ext = req.extensions();
-        let claims_opt = ext.get::<Claims>();
+    wc.handle_web(req, &wc, &template_name).await
+}
 
-        let sites = if let Some(claims) = claims_opt {
-            // with claims, we check against them
-            wc.app_config.site_list.sites()
-            .iter().filter(|site|is_site_for_claims(site, claims))
-            .collect()    
-        } else if wc.app_config.auth.is_none() {
-            // no claims, but auth disabled means we do not check for matching
-            // rules, but simply deliver all elements (intended for testing)
-            wc.app_config.site_list.sites().iter().collect()
-        } else {
-            // no claims, auth enabled -> no elements visible
-            Vec::new()
-        };
-        let empty = serde_json::Value::Object(Map::new());
-        let ctx = HbsContext {
-            access_token: 
-                if let Some(claims) = claims_opt {
-                    claims.value()
-                } else {
-                    &empty
-                },
-            sites: sites
-        };
-        return match wc.hb.render(&template_name, &ctx) {
-            Ok(body) => HttpResponse::Ok().body(body),
-            Err(e) => HttpResponse::InternalServerError().body(e.desc)
+impl WebContext<'_> {
+
+    pub async fn handle_web(&self, req: HttpRequest, wc: &WebContext<'_>, template_name: &String) -> impl Responder{
+
+        if wc.hb.has_template(template_name) {
+            
+            let ext = req.extensions();
+            let claims_opt = ext.get::<Claims>();
+
+            let sites = if let Some(claims) = claims_opt {
+                // with claims, we check against them
+                wc.app_config.site_list.sites()
+                .iter().filter(|site|is_site_for_claims(site, claims))
+                .collect()    
+            } else if wc.app_config.auth.is_none() {
+                // no claims, but auth disabled means we do not check for matching
+                // rules, but simply deliver all elements (intended for testing)
+                wc.app_config.site_list.sites().iter().collect()
+            } else {
+                // no claims, auth enabled -> no elements visible
+                Vec::new()
+            };
+            let empty = serde_json::Value::Object(Map::new());
+            let ctx = HbsContext {
+                access_token: 
+                    if let Some(claims) = claims_opt {
+                        claims.value()
+                    } else {
+                        &empty
+                    },
+                sites: sites
+            };
+            let content_type = match template_name.rsplit_once(".") {
+                Some((_, suffix)) => match suffix.to_ascii_lowercase().as_str() {
+                    "html" => "text/html",
+                    "txt" => "text/plain",
+                    "js" => "application/javascript",
+                    "json" => "application/json",
+                    _ => "text/plain"
+                }
+                None => "text/plain"
+            };
+            return match wc.hb.render(&template_name, &ctx) {
+                Ok(body) => HttpResponse::Ok()
+                    .set_header("Content-Type", content_type)
+                    .body(body),
+                Err(e) => HttpResponse::InternalServerError()
+                    .set_header("Content-Type", "text/plain")
+                    .body(e.desc)                   
+            }
         }
-    }
 
 
-    // check for non-template files on file system
-    if let Some(template_dir) = wc.app_config.common.template_dir.clone() {
-        let dir_content_response = template_dir
-            .join(PathBuf::from(&template_name))
-            .canonicalize().ok()
-            .filter(|p|p.starts_with(&template_dir))
-            .and_then(|p|NamedFile::open(p).ok())
-            .and_then(|n| n.into_response(&req).ok());
-        
-        if let Some(response) = dir_content_response {
-            return response
+        // check for non-template files on file system
+        if let Some(template_dir) = wc.app_config.common.template_dir.clone() {
+            let dir_content_response = template_dir
+                .join(PathBuf::from(&template_name))
+                .canonicalize().ok()
+                .filter(|p|p.starts_with(&template_dir))
+                .and_then(|p|NamedFile::open(p).ok())
+                .and_then(|n| n.into_response(&req).ok());
+            
+            if let Some(response) = dir_content_response {
+                return response
+            }
         }
-    }
 
-    // check for non-template files in builtin list
-    if let Some(v) = templates::resources().get(template_name.as_str()) {
-        return HttpResponse::Ok().body(*v);
-    }
+        // check for non-template files in builtin list
+        if let Some(v) = templates::resources().get(template_name.as_str()) {
+            return HttpResponse::Ok().body(*v);
+        }
 
-    HttpResponse::NotFound().finish()
+        HttpResponse::NotFound().finish()
+    }
 }
 
 #[get("/graphql")]
@@ -442,7 +464,7 @@ async fn async_main(serve_config: ServeConfig) -> std::io::Result<()> {
         let builtins = templates::resources();
         let builtin_templates = builtins
             .iter()
-            .filter_map(|t| match t.0.strip_suffix(HTML_SUFFIX){
+            .filter_map(|t| match t.0.strip_suffix(HBS_SUFFIX){
                 Some(n) => Some((n, t.1)),
                 None => None
             });
@@ -454,7 +476,7 @@ async fn async_main(serve_config: ServeConfig) -> std::io::Result<()> {
             }
         }
         if let Some(d) = template_dir.clone() {
-            hb.register_templates_directory(HTML_SUFFIX, d).unwrap();
+            hb.register_templates_directory(HBS_SUFFIX, d).unwrap();
         }
         let web_context = web::Data::new(WebContext{hb, app_config: serve_config.clone()});
 
